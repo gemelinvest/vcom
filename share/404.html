@@ -23,7 +23,8 @@
     (function () {
       var dest = "https://voip-call-app-7d0c3.web.app";
       var path = location.pathname || "/";
-      path = path.replace(/^\/vcom\/share\/?/i, "/");
+      path = path.replace(/^\/vcom\/share(?=\/|$)/i, "");
+      path = path.replace(/^\/share(?=\/|$)/i, "");
       path = path.replace(/\/index\.html$/i, "/");
       if (!path) path = "/";
       location.replace(dest + path + location.search + location.hash);
