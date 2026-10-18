@@ -640,7 +640,7 @@
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=v6").catch(function () {});
+    navigator.serviceWorker.register("./sw.js?v=v7").catch(function () {});
   }
 
   function callOpen() {
@@ -687,11 +687,24 @@
       applyUpdate();
     });
   }
+  function restorePendingUpdateNow() {
+    var storedPending = 0;
+    try { storedPending = Number(localStorage.getItem(PENDING_KEY) || 0) || 0; } catch (e) {}
+    if (storedPending) showUpdate(storedPending);
+  }
   setInterval(function () {
-    if (pendingUpdate && !callOpen() && $("vcom-update") && $("vcom-update").hidden) {
+    if ((pendingUpdate || pendingUpdateRevisionSafe()) && !callOpen() && $("vcom-update") && $("vcom-update").hidden) {
+      restorePendingUpdateNow();
       show($("vcom-update"), true);
     }
   }, 700);
+  function pendingUpdateRevisionSafe() {
+    try { return Number(localStorage.getItem(PENDING_KEY) || 0) || 0; } catch (e) { return 0; }
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") restorePendingUpdateNow();
+  });
+  window.addEventListener("pageshow", restorePendingUpdateNow);
 
   if ($("pending-logout")) {
     $("pending-logout").addEventListener("click", function () {

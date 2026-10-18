@@ -254,19 +254,28 @@
     }
   }
   var UPDATE_SEEN_KEY = "vcom_update_seen";
+  var UPDATE_PENDING_KEY = "vcom_pending_revision";
   function seenUpdateRevision() {
     try { return Number(localStorage.getItem(UPDATE_SEEN_KEY) || 0) || 0; } catch (e) { return 0; }
+  }
+  function pendingUpdateRevision() {
+    try { return Number(localStorage.getItem(UPDATE_PENDING_KEY) || 0) || 0; } catch (e) { return 0; }
+  }
+  function rememberPendingRevision(revision) {
+    try { localStorage.setItem(UPDATE_PENDING_KEY, String(revision)); } catch (e) {}
   }
   function rememberSeenRevision(revision) {
     try {
       localStorage.setItem(UPDATE_SEEN_KEY, String(revision));
       localStorage.setItem("vcom_revision", String(revision));
+      localStorage.removeItem(UPDATE_PENDING_KEY);
     } catch (e) {}
   }
   function applyAppUpdate(revision) {
-    revision = Number(revision || window.__vcomPendingRevision || 0);
+    revision = Number(revision || window.__vcomPendingRevision || pendingUpdateRevision() || 0);
     if (!revision) return;
     rememberSeenRevision(revision);
+    window.__vcomPendingRevision = 0;
     var done = function () { location.replace("/?upd=" + revision); };
     if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistrations) {
       done();
@@ -284,7 +293,9 @@
   function revealUpdateBar() {
     if (guestCode) return;
     var bar = document.getElementById("vcom-update");
-    if (!bar || !window.__vcomPendingRevision) return;
+    var revision = Number(window.__vcomPendingRevision || pendingUpdateRevision() || 0);
+    if (!bar || !revision || revision <= seenUpdateRevision()) return;
+    window.__vcomPendingRevision = revision;
     var span = bar.querySelector("span");
     if (span) span.textContent = "קיימת גרסה חדשה לאפליקציה";
     if (isOnCall()) {
@@ -292,18 +303,56 @@
       return;
     }
     bar.hidden = false;
+    try { bar.removeAttribute("hidden"); } catch (e) {}
   }
   function offerUpdate(revision) {
     revision = Number(revision || 0);
     if (!revision || guestCode) return;
-    if (revision <= seenUpdateRevision()) return;
+    if (revision <= seenUpdateRevision()) {
+      if (revision === seenUpdateRevision()) {
+        try { localStorage.removeItem(UPDATE_PENDING_KEY); } catch (e) {}
+      }
+      return;
+    }
     window.__vcomPendingRevision = revision;
+    rememberPendingRevision(revision);
     revealUpdateBar();
+  }
+  function revisionFromSnap(snap) {
+    try {
+      var exists = snap && (typeof snap.exists === "function" ? snap.exists() : !!snap.exists);
+      if (!exists) return 0;
+      return Number((snap.data() || {}).revision || 0) || 0;
+    } catch (e) { return 0; }
+  }
+  function attachUpdateWatch(fs, db) {
+    if (!fs || !db || !fs.doc) return false;
+    var ref = fs.doc(db, "app", "update");
+    var fromSnap = function (snap) { offerUpdate(revisionFromSnap(snap)); };
+    if (fs.getDoc) fs.getDoc(ref).then(fromSnap).catch(function () {});
+    if (attachUpdateWatch.attached) return true;
+    attachUpdateWatch.attached = true;
+    if (fs.onSnapshot) fs.onSnapshot(ref, fromSnap, function () {});
+    attachUpdateWatch.poller = setInterval(function () {
+      if (guestCode) return;
+      if (window.__vcomPendingRevision && !isOnCall()) {
+        revealUpdateBar();
+        return;
+      }
+      if (fs.getDoc) fs.getDoc(ref).then(fromSnap).catch(function () {});
+    }, 2500);
+    return true;
   }
   function wireUpdateBar() {
     var bar = document.getElementById("vcom-update");
     if (!bar || bar.__vcomWired) return;
     bar.__vcomWired = true;
+    if (!document.getElementById("vcom-update-skin")) {
+      var skin = document.createElement("style");
+      skin.id = "vcom-update-skin";
+      skin.textContent = "#vcom-update{z-index:10050!important}";
+      document.head.appendChild(skin);
+    }
     var span = bar.querySelector("span");
     if (span) span.textContent = "קיימת גרסה חדשה לאפליקציה";
     var go = document.getElementById("vcom-update-go");
@@ -312,11 +361,11 @@
       go.addEventListener("click", function (event) {
         event.preventDefault();
         event.stopPropagation();
-        applyAppUpdate(window.__vcomPendingRevision);
+        applyAppUpdate(window.__vcomPendingRevision || pendingUpdateRevision());
       }, true);
     }
     new MutationObserver(function () {
-      if (!window.__vcomPendingRevision) return;
+      if (!(window.__vcomPendingRevision || pendingUpdateRevision())) return;
       if (isOnCall()) {
         bar.hidden = true;
         return;
@@ -324,31 +373,47 @@
       if (bar.hidden) bar.hidden = false;
     }).observe(bar, { attributes: true, attributeFilter: ["hidden"] });
     setInterval(function () {
-      if (window.__vcomPendingRevision) revealUpdateBar();
+      if (window.__vcomPendingRevision || pendingUpdateRevision()) revealUpdateBar();
     }, 700);
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible") revealUpdateBar();
+      if (document.visibilityState === "visible") {
+        offerUpdate(pendingUpdateRevision());
+        revealUpdateBar();
+      }
     });
-    window.addEventListener("pageshow", function () { revealUpdateBar(); });
+    window.addEventListener("pageshow", function () {
+      offerUpdate(pendingUpdateRevision());
+      revealUpdateBar();
+    });
+    offerUpdate(pendingUpdateRevision());
     watchRemoteUpdate();
   }
   function watchRemoteUpdate() {
-    if (watchRemoteUpdate.started || guestCode) return;
-    var tries = 0;
-    var timer = setInterval(function () {
-      tries += 1;
+    if (guestCode) return;
+    offerUpdate(pendingUpdateRevision());
+    if (watchRemoteUpdate.started) return;
+    function hostFs() {
       var fs = window.firebase_firestore;
-      if (!fs || !fs.onSnapshot || !fs.doc || !fs.getFirestore) {
-        if (tries > 120) clearInterval(timer);
+      if (!fs || !fs.onSnapshot || !fs.doc || !fs.getFirestore) return null;
+      try { return { fs: fs, db: fs.getFirestore() }; } catch (e) { return null; }
+    }
+    var host = hostFs();
+    if (host && attachUpdateWatch(host.fs, host.db)) {
+      watchRemoteUpdate.started = true;
+      return;
+    }
+    if (watchRemoteUpdate.pollHost) return;
+    var tries = 0;
+    watchRemoteUpdate.pollHost = setInterval(function () {
+      tries += 1;
+      var ready = hostFs();
+      if (ready && attachUpdateWatch(ready.fs, ready.db)) {
+        clearInterval(watchRemoteUpdate.pollHost);
+        watchRemoteUpdate.started = true;
         return;
       }
-      clearInterval(timer);
-      watchRemoteUpdate.started = true;
-      fs.onSnapshot(fs.doc(fs.getFirestore(), "app", "update"), function (snap) {
-        var revision = snap && snap.exists && snap.exists() ? Number((snap.data() || {}).revision || 0) : 0;
-        offerUpdate(revision);
-      }, function () {});
-    }, 400);
+      if (tries > 150) clearInterval(watchRemoteUpdate.pollHost);
+    }, 300);
   }
   function wireApproval() {
     var card = document.querySelector(".vcom-approval-card");
@@ -369,6 +434,8 @@
   }
   function bootChrome() {
     wireMediaPersist();
+    wireUpdateBar();
+    wireApproval();
     var tries = 0;
     var timer = setInterval(function () {
       tries += 1;
