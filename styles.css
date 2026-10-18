@@ -407,6 +407,9 @@ button { cursor: pointer; }
   justify-content: center;
   padding: calc(24px + var(--safe-t)) 22px calc(28px + var(--safe-b));
   background: #F2F2F7;
+  position: fixed;
+  inset: 0;
+  z-index: 70;
 }
 .vcom-approval-card {
   width: min(420px, 100%);

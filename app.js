@@ -154,6 +154,8 @@
         setSession(user);
         go("pending");
       });
+    }).catch(function () {
+      setError("reg-error", "לא ניתן להשלים הרשמה כרגע");
     });
   });
 
