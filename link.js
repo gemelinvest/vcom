@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "end5";
+  window.__VCOM_LINK_BUILD = "end6";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -39,7 +39,7 @@
     if (d.length === 9) return d.slice(0, 3) + "-" + d.slice(3);
     return d || "";
   }
-  function shareUrl(code) { return "https://vcom.web.app/vcom/" + code; }
+  function shareUrl(code) { return "https://voip-call-app-7d0c3.web.app/vcom/" + code; }
   function clip(text) {
     var value = String(text || "");
     window.__vcomCopied = value;
