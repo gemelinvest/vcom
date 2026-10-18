@@ -1,4 +1,4 @@
-const CACHE = "vcom-v1";
+const CACHE = "vcom-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,6 +8,8 @@ const ASSETS = [
   "./apple-touch-icon.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/vcom-share.png",
+  "./icons/vcom-blue-192.png",
   "./icons/badge-256.png"
 ];
 

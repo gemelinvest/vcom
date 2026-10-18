@@ -1,0 +1,1304 @@
+(function () {
+  var TTL = 600000;
+  function readGuest() {
+    var q = "";
+    try { q = new URLSearchParams(location.search).get("g") || ""; } catch (e) {}
+    if (/^[A-Za-z0-9]{6,12}$/.test(q)) return q;
+    var m = String(location.pathname || "").match(/^\/vcom\/([A-Za-z0-9]{6,12})\/?$/);
+    return m ? m[1] : "";
+  }
+  var guestCode = readGuest();
+  var ICE = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
+      {
+        urls: [
+          "turn:openrelay.metered.ca:80?transport=udp",
+          "turn:openrelay.metered.ca:80?transport=tcp",
+          "turn:openrelay.metered.ca:443?transport=tcp",
+          "turns:openrelay.metered.ca:443?transport=tcp"
+        ],
+        username: "openrelayproject",
+        credential: "openrelayproject"
+      }
+    ]
+  };
+  var firebaseConfig = {
+    apiKey: "AIzaSyCN7q0RH1uew-Sb4xyl8YNSEPZM-jqaQJI",
+    authDomain: "voip-call-app-7d0c3.firebaseapp.com",
+    projectId: "voip-call-app-7d0c3",
+    appId: "1:307204199533:web:bc64335c5b3ab8ef289b64"
+  };
+
+  function digits(value) { return String(value || "").replace(/\D/g, ""); }
+  function pretty(phone) {
+    var d = digits(phone);
+    if (d.length === 9) return d.slice(0, 3) + "-" + d.slice(3);
+    return d || "";
+  }
+  function shareUrl(code) { return location.origin + "/vcom/" + code; }
+  function clip(text) {
+    var value = String(text || "");
+    window.__vcomCopied = value;
+    var fallback = function () {
+      var area = document.createElement("textarea");
+      area.value = value;
+      area.setAttribute("readonly", "true");
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.focus();
+      area.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      area.remove();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).catch(fallback);
+    } else fallback();
+  }
+  function clock(ms) {
+    var left = Math.max(0, Math.ceil(ms / 1000));
+    var m = Math.floor(left / 60);
+    var s = left % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+  function untilClock(at) {
+    var when = new Date(at);
+    var h = when.getHours();
+    var m = when.getMinutes();
+    return "הלינק בתוקף עד " + (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+  }
+
+  var ringAudio = new Audio("/assets/assets/sounds/incoming_call.wav");
+  ringAudio.id = "vcom-ring";
+  ringAudio.preload = "auto";
+  ringAudio.loop = true;
+  ringAudio.setAttribute("playsinline", "true");
+  var ringUnlocked = false;
+  function stopOsc() {
+    window.__vcomRingOn = false;
+    if (window.__vcomRingTimer) {
+      clearInterval(window.__vcomRingTimer);
+      window.__vcomRingTimer = null;
+    }
+    if (window.__vcomRingGain) {
+      try { window.__vcomRingGain.disconnect(); } catch (e) {}
+      window.__vcomRingGain = null;
+    }
+  }
+  function startOsc() {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!window.__vcomToneCtx) window.__vcomToneCtx = new Ctx();
+    var ctx = window.__vcomToneCtx;
+    if (ctx.state === "suspended" && ctx.resume) ctx.resume();
+    stopOsc();
+    var master = ctx.createGain();
+    master.gain.value = 0.55;
+    master.connect(ctx.destination);
+    window.__vcomRingGain = master;
+    window.__vcomRingOn = true;
+    var notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 659.25];
+    var step = 0.22;
+    var play = function () {
+      if (!window.__vcomRingOn) return;
+      var t0 = ctx.currentTime + 0.02;
+      notes.forEach(function (freq, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        var start = t0 + i * step;
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.85, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + step - 0.02);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start(start);
+        osc.stop(start + step);
+      });
+    };
+    play();
+    window.__vcomRingTimer = setInterval(play, 2400);
+  }
+  function unlockRing() {
+    if (ringUnlocked) return;
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      if (!window.__vcomToneCtx) window.__vcomToneCtx = new Ctx();
+      if (window.__vcomToneCtx.resume) window.__vcomToneCtx.resume();
+    }
+    ringAudio.volume = 0.01;
+    var pending = ringAudio.play();
+    var done = function () {
+      ringAudio.pause();
+      try { ringAudio.currentTime = 0; } catch (e) {}
+      ringAudio.volume = 1;
+      ringUnlocked = true;
+    };
+    if (pending && pending.then) pending.then(done).catch(function () {});
+    else done();
+  }
+  document.addEventListener("pointerdown", unlockRing, true);
+  document.addEventListener("touchend", unlockRing, true);
+  document.addEventListener("keydown", unlockRing, true);
+  window.vcomStartRing = function () {
+    if (window.__vcomRinging) return;
+    window.__vcomRinging = true;
+    window.__vcomRingPlays = (window.__vcomRingPlays || 0) + 1;
+    var menu = document.getElementById("vcom-link-menu");
+    if (menu) menu.hidden = true;
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+    ringAudio.muted = false;
+    ringAudio.volume = 1;
+    ringAudio.loop = true;
+    try { ringAudio.currentTime = 0; } catch (e) {}
+    var pending = ringAudio.play();
+    if (pending && pending.then) {
+      pending.then(function () { window.__vcomRingErr = ""; stopOsc(); }).catch(function (err) {
+        window.__vcomRingErr = String(err && err.message || err);
+        if (window.__vcomRinging) startOsc();
+      });
+    } else if (ringAudio.paused) startOsc();
+  };
+  window.vcomStopRing = function () {
+    window.__vcomRinging = false;
+    try { ringAudio.pause(); ringAudio.currentTime = 0; } catch (e) {}
+    stopOsc();
+    if (window.__vcomReleasing) return;
+    if (!window.__vcomSpeakerTouched) {
+      window.__vcomSpeaker = false;
+      try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (e) {}
+      if (window.vcomRouteOutputs) window.vcomRouteOutputs();
+    }
+  };
+  var MEDIA_KEY = "vcom.media.granted.v1";
+  function mediaGranted() {
+    try { return JSON.parse(localStorage.getItem(MEDIA_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function rememberMedia(stream) {
+    var prev = mediaGranted();
+    var next = {
+      audio: !!(prev.audio || (stream && stream.getAudioTracks && stream.getAudioTracks().length)),
+      video: !!(prev.video || (stream && stream.getVideoTracks && stream.getVideoTracks().length))
+    };
+    try { localStorage.setItem(MEDIA_KEY, JSON.stringify(next)); } catch (e) {}
+  }
+  function isOnCall() {
+    try {
+      var bloc = window.__vcomBloc;
+      if (bloc && bloc.c) {
+        if (bloc.c.gnY && bloc.c.gnY()) return true;
+        if (bloc.c.b) return true;
+      }
+    } catch (e) {}
+    if (window.__vcomRinging) return true;
+    var call = document.getElementById("call-layer");
+    if (call && !call.hidden) return true;
+    var incoming = document.getElementById("incoming-layer");
+    if (incoming && !incoming.hidden) return true;
+    var guestCall = document.querySelector("#vcom-guest [data-view=call]");
+    if (guestCall && !guestCall.hidden) return true;
+    return false;
+  }
+  function appHomeUrl() {
+    try {
+      if (/\.web\.app$/.test(location.hostname) || /firebaseapp\.com$/.test(location.hostname)) return "/";
+    } catch (e) {}
+    return "./";
+  }
+  function wireMediaPersist() {
+    var devices = navigator.mediaDevices;
+    if (!devices || !devices.getUserMedia || devices.getUserMedia.__vcomPersist) return;
+    var raw = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = function (constraints) {
+      var askedVideo = !!(constraints && constraints.video);
+      var askedAudio = !!(constraints && constraints.audio);
+      var mem = mediaGranted();
+      var run = function (spec) {
+        return raw(spec).then(function (stream) {
+          rememberMedia(stream);
+          return stream;
+        });
+      };
+      var canPrime = askedAudio && (!mem.audio || (askedVideo && !mem.video));
+      var gestured = !navigator.userActivation || navigator.userActivation.isActive;
+      if (canPrime && gestured && !mem.video) {
+        return run({ audio: constraints.audio, video: { facingMode: "user" } }).then(function (stream) {
+          rememberMedia(stream);
+          try { stream.getTracks().forEach(function (track) { track.stop(); }); } catch (e) {}
+          return run(constraints);
+        }).catch(function () { return run(constraints); });
+      }
+      return run(constraints);
+    };
+    devices.getUserMedia.__vcomPersist = true;
+    if (navigator.permissions && navigator.permissions.query && !navigator.permissions.query.__vcomPersist) {
+      var origQuery = navigator.permissions.query.bind(navigator.permissions);
+      navigator.permissions.query = function (desc) {
+        var name = desc && desc.name;
+        var mem = mediaGranted();
+        if ((name === "microphone" && mem.audio) || (name === "camera" && mem.video)) {
+          return Promise.resolve({
+            state: "granted",
+            onchange: null,
+            addEventListener: function () {},
+            removeEventListener: function () {}
+          });
+        }
+        return origQuery(desc);
+      };
+      navigator.permissions.query.__vcomPersist = true;
+    }
+  }
+  function wireUpdateBar() {
+    var bar = document.getElementById("vcom-update");
+    if (!bar || bar.__vcomWired) return;
+    bar.__vcomWired = true;
+    var span = bar.querySelector("span");
+    if (span) span.textContent = "קיימת גרסה חדשה לאפליקציה";
+    var pending = false;
+    var hold = function () {
+      if (!bar.hidden && isOnCall()) {
+        bar.hidden = true;
+        pending = true;
+      }
+    };
+    hold();
+    new MutationObserver(hold).observe(bar, { attributes: true, attributeFilter: ["hidden"] });
+    setInterval(function () {
+      if (pending && !isOnCall()) {
+        pending = false;
+        bar.hidden = false;
+      }
+    }, 700);
+  }
+  function wireApproval() {
+    var card = document.querySelector(".vcom-approval-card");
+    if (!card || card.__vcomWired) return;
+    card.__vcomWired = true;
+    var h2 = card.querySelector("h2");
+    var p = card.querySelector("p");
+    if (h2) h2.textContent = "הבקשה נשלחה בהצלחה";
+    if (p) {
+      p.innerHTML = 'אנו נעדכן כאן שהמנוי שלך אושר.<br>בברכה, צוות <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span>';
+    }
+    if (!document.getElementById("vcom-approval-skin")) {
+      var skin = document.createElement("style");
+      skin.id = "vcom-approval-skin";
+      skin.textContent = ".vcom-word .v{color:#34C759;font-weight:700}.vcom-word .com{color:#007AFF;font-weight:700}";
+      document.head.appendChild(skin);
+    }
+  }
+  function bootChrome() {
+    wireMediaPersist();
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      wireUpdateBar();
+      wireApproval();
+      if (tries > 40) clearInterval(timer);
+    }, 400);
+  }
+  bootChrome();
+
+  window.vcomGuestCode = function (phone) {
+    var key = digits(phone);
+    window.__vcomGuestLookups = window.__vcomGuestLookups || [];
+    if (window.__vcomGuestLookups.length < 20) window.__vcomGuestLookups.push(key);
+    var row = window.__vcomGuestBook && window.__vcomGuestBook[key];
+    if (!row || !row.code) return "";
+    if (row.status === "active") return row.code;
+    if (row.status === "ended") return "";
+    if (row.expiresAt > Date.now()) return row.code;
+    return "";
+  };
+
+  if (guestCode) {
+    bootGuest(guestCode);
+    return;
+  }
+  bootIssuer();
+
+  function bootGuest(code) {
+    if (!/^[A-Za-z0-9]{6,12}$/.test(code)) code = "";
+    var splash = document.getElementById("vcom-splash");
+    if (splash) splash.remove();
+    var brand = document.getElementById("vcom-brand");
+    if (brand) brand.hidden = true;
+    document.title = "VCOM";
+    var style = document.createElement("style");
+    style.textContent = guestCss();
+    document.head.appendChild(style);
+    var root = document.createElement("div");
+    root.id = "vcom-guest";
+    root.innerHTML = guestHtml();
+    document.body.appendChild(root);
+    var remote = document.createElement("audio");
+    remote.id = "vcom-guest-remote";
+    remote.autoplay = true;
+    remote.setAttribute("playsinline", "true");
+    remote.hidden = true;
+    document.body.appendChild(remote);
+    var nodes = {
+      wait: root.querySelector("[data-view=wait]"),
+      call: root.querySelector("[data-view=call]"),
+      dead: root.querySelector("[data-view=dead]"),
+      name: root.querySelector("[data-name]"),
+      status: root.querySelector("[data-status]"),
+      timer: root.querySelector("[data-timer]"),
+      stage: root.querySelector("[data-stage]"),
+      remoteVideo: root.querySelector("[data-remote]"),
+      localVideo: root.querySelector("[data-local]"),
+      answer: root.querySelector("[data-answer]"),
+      decline: root.querySelector("[data-decline]"),
+      hang: root.querySelector("[data-hang]"),
+      mute: root.querySelector("[data-mute]"),
+      speaker: root.querySelector("[data-speaker]"),
+      deadText: root.querySelector("[data-dead]"),
+      expired: root.querySelector("[data-expired]"),
+      join: root.querySelector("[data-join]"),
+      deadView: root.querySelector("[data-view=dead]")
+    };
+    var session = null;
+    var started = 0;
+    function justEndedKey() { return "vcom.justEnded." + code; }
+    function markJustEnded() {
+      try { sessionStorage.setItem(justEndedKey(), "1"); } catch (e) {}
+    }
+    function wasJustEnded() {
+      try { return sessionStorage.getItem(justEndedKey()) === "1"; } catch (e) { return false; }
+    }
+    function showDead() {
+      if ((session && session.answered) || (nodes.call && !nodes.call.hidden)) markJustEnded();
+      var afterCall = wasJustEnded();
+      if (nodes.deadView) nodes.deadView.classList.toggle("after-call", afterCall);
+      if (nodes.expired) nodes.expired.hidden = afterCall;
+      show("dead");
+    }
+    function show(which) {
+      nodes.wait.hidden = which !== "wait";
+      nodes.call.hidden = which !== "call";
+      nodes.dead.hidden = which !== "dead";
+    }
+    function paint(data) {
+      var grace = data && data.status === "ringing" ? 180000 : 0;
+      var expired = !data || (data.status !== "active" && data.expiresAt + grace <= Date.now());
+      if (!data || data.status === "ended" || expired) {
+        window.vcomStopRing();
+        if (nodes.stage) nodes.stage.hidden = true;
+        if (session) session.close();
+        if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+        showDead();
+        return;
+      }
+      if (data.status === "waiting" || !data.offer) {
+        window.vcomStopRing();
+        show("wait");
+        return;
+      }
+      var guestName = data.guestName || data.ownerName || pretty(data.ownerPhone) || "";
+      nodes.name.textContent = guestName ? ("שלום " + guestName) : "שלום";
+      if (!session || !session.answered) {
+        nodes.status.textContent = "שיחה נכנסת";
+        nodes.timer.hidden = true;
+        nodes.answer.hidden = false;
+        nodes.decline.hidden = false;
+        nodes.hang.hidden = true;
+        nodes.mute.hidden = true;
+        nodes.speaker.hidden = true;
+        show("call");
+        window.vcomStartRing();
+        return;
+      }
+      show("call");
+    }
+    function load() {
+      Promise.all([
+        import("https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js"),
+        import("https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js")
+      ]).then(function (mods) {
+        var appMod = mods[0];
+        var fs = mods[1];
+        var app = appMod.initializeApp(firebaseConfig);
+        var db;
+        try {
+          db = fs.initializeFirestore(app, {
+            experimentalForceLongPolling: true,
+            experimentalAutoDetectLongPolling: false
+          });
+        } catch (e) {
+          db = fs.getFirestore(app);
+        }
+        var ref = fs.doc(db, "guestLinks", code);
+        fs.onSnapshot(ref, function (snap) {
+          var data = snap.exists() ? snap.data() || {} : null;
+          window.__vcomGuestData = data;
+          if (session && data && data.status === "ended") {
+            session.close();
+            if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+            paint(data);
+            return;
+          }
+          if (session && session.pc && data) {
+            session.take(data);
+          }
+          if (!session || !session.answered) paint(data);
+          else if (data && data.status === "active") {
+            nodes.status.textContent = "בשיחה";
+            nodes.timer.hidden = false;
+          }
+        }, function () {
+          showDead();
+        });
+        nodes.answer.addEventListener("click", function () {
+          var data = window.__vcomGuestData;
+          if (!data || !data.offer || session) return;
+          if (data.expiresAt <= Date.now() && data.status !== "ringing" && data.status !== "active") return;
+          unlockRing();
+          window.vcomStopRing();
+          var wantVideo = data.video === true;
+          var audioAsk = { echoCancellation: true, noiseSuppression: true };
+          var media = navigator.mediaDevices.getUserMedia({
+            audio: audioAsk,
+            video: wantVideo ? { facingMode: "user" } : false
+          }).catch(function () {
+            return navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
+          });
+          session = openAnswer(fs, db, ref, data, media, remote, nodes);
+          markJustEnded();
+          nodes.answer.hidden = true;
+          nodes.decline.hidden = true;
+          nodes.hang.hidden = false;
+          nodes.mute.hidden = false;
+          nodes.speaker.hidden = false;
+          nodes.status.textContent = "מתחבר...";
+          nodes.timer.hidden = true;
+          started = Date.now();
+        });
+        if (nodes.join) {
+          nodes.join.addEventListener("click", function () {
+            location.href = appHomeUrl();
+          });
+        }
+        nodes.decline.addEventListener("click", function () {
+          window.vcomStopRing();
+          markJustEnded();
+          if (session) session.close();
+          if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+          fs.updateDoc(ref, { status: "ended" }).catch(function () {});
+        });
+        nodes.hang.addEventListener("click", function () {
+          markJustEnded();
+          if (session) session.close();
+          if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+          fs.updateDoc(ref, { status: "ended" }).catch(function () {});
+        });
+        nodes.mute.addEventListener("click", function () {
+          if (!session) return;
+          session.muted = !session.muted;
+          session.applyMute();
+          nodes.mute.classList.toggle("on", session.muted);
+        });
+        nodes.speaker.addEventListener("click", function () {
+          if (!session) return;
+          session.speaker = !session.speaker;
+          nodes.speaker.classList.toggle("on", session.speaker);
+          try { if (navigator.audioSession) navigator.audioSession.type = session.speaker ? "playback" : "play-and-record"; } catch (e) {}
+          remote.volume = 1;
+        });
+        setInterval(function () {
+          if (!session || !session.answered || nodes.call.hidden) return;
+          var data = window.__vcomGuestData || {};
+          var from = data.callStartedAt || started;
+          if (!from) return;
+          nodes.timer.hidden = false;
+          nodes.timer.textContent = clock(Date.now() - from);
+        }, 500);
+      }).catch(function () {
+        showDead();
+      });
+    }
+    if (!code) {
+      showDead();
+      return;
+    }
+    show("wait");
+    load();
+  }
+
+  function openAnswer(fs, db, ref, data, mediaPromise, remote, nodes) {
+    var pc = new RTCPeerConnection(ICE);
+    var local = null;
+    var queued = [];
+    var seen = {};
+    var sent = {};
+    var state = { pc: pc, answered: true, muted: false, speaker: true, closed: false };
+    state.applyMute = function () {
+      if (!local) return;
+      local.getAudioTracks().forEach(function (track) { track.enabled = !state.muted; });
+    };
+    state.close = function () {
+      if (state.closed) return;
+      state.closed = true;
+      try { pc.close(); } catch (e) {}
+      if (local) local.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+      local = null;
+      try { if (remote) remote.srcObject = null; } catch (e) {}
+      ["vcom-guest-remote-video", "vcom-guest-local-video"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        try { el.srcObject = null; } catch (e) {}
+        el.hidden = true;
+      });
+      if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+    };
+    state.take = function (next) {
+      (next.callerCandidates || []).forEach(function (item) {
+        var key = JSON.stringify(item);
+        if (seen[key]) return;
+        if (!pc.remoteDescription) { queued.push(item); return; }
+        seen[key] = true;
+        pc.addIceCandidate(item).catch(function () {});
+      });
+    };
+    pc.onicecandidate = function (event) {
+      if (!event.candidate) return;
+      var item = {
+        candidate: event.candidate.candidate,
+        sdpMid: event.candidate.sdpMid,
+        sdpMLineIndex: event.candidate.sdpMLineIndex
+      };
+      var key = JSON.stringify(item);
+      if (sent[key]) return;
+      sent[key] = true;
+      fs.updateDoc(ref, { guestCandidates: fs.arrayUnion(item) }).catch(function () {});
+    };
+    function showGuestVideo(el, stream) {
+      if (!el || !stream || !stream.getVideoTracks || !stream.getVideoTracks().length) return;
+      el.srcObject = stream;
+      el.muted = true;
+      if (nodes.stage) nodes.stage.hidden = false;
+      if (nodes.call) nodes.call.classList.add("video");
+      var play = el.play();
+      if (play && play.catch) play.catch(function () {});
+    }
+    pc.ontrack = function (event) {
+      var stream = event.streams[0];
+      remote.srcObject = stream;
+      var play = remote.play();
+      if (play && play.catch) play.catch(function () {});
+      showGuestVideo(nodes.remoteVideo, stream);
+    };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === "connected") {
+        nodes.status.textContent = "בשיחה";
+        nodes.timer.hidden = false;
+        fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
+      }
+      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+        nodes.status.textContent = "מתחבר...";
+      }
+    };
+    mediaPromise.then(function (stream) {
+      if (state.closed) {
+        stream.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+        if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+        return Promise.reject(new Error("call-ended"));
+      }
+      local = stream;
+      state.applyMute();
+      showGuestVideo(nodes.localVideo, stream);
+      stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
+      return pc.setRemoteDescription(data.offer);
+    }).then(function () {
+      queued.splice(0).forEach(function (item) {
+        var key = JSON.stringify(item);
+        if (seen[key]) return;
+        seen[key] = true;
+        pc.addIceCandidate(item).catch(function () {});
+      });
+      state.take(window.__vcomGuestData || {});
+      return pc.createAnswer();
+    }).then(function (answer) {
+      return pc.setLocalDescription(answer).then(function () { return answer; });
+    }).then(function (answer) {
+      return fs.updateDoc(ref, { answer: { type: answer.type, sdp: answer.sdp }, status: "ringing" });
+    }).catch(function () {
+      nodes.status.textContent = "לא הצלחנו להתחבר";
+    });
+    return state;
+  }
+
+  function bootIssuer() {
+    var style = document.createElement("style");
+    style.textContent = issuerCss();
+    document.head.appendChild(style);
+    var menu = document.createElement("div");
+    menu.id = "vcom-link-menu";
+    menu.hidden = true;
+    menu.innerHTML = '<button id="vcom-link-open" type="button">קבל לינק לשיחה</button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    document.body.appendChild(menu);
+    var logo = document.createElement("img");
+    logo.id = "vcom-menu-logo";
+    logo.alt = "";
+    logo.src = "icons/vcom-menu-logo.png?v=call30";
+    logo.hidden = true;
+    document.body.appendChild(logo);
+    var paste = document.createElement("input");
+    paste.id = "vcom-dial-paste";
+    paste.type = "text";
+    paste.inputMode = "none";
+    paste.autocomplete = "off";
+    paste.setAttribute("aria-label", "הדבקת מספר");
+    paste.hidden = true;
+    document.body.appendChild(paste);
+    function pushDigits(text) {
+      if (window.__vcomPasteDigits) window.__vcomPasteDigits(text);
+      paste.value = "";
+    }
+    paste.addEventListener("paste", function (event) {
+      var text = event.clipboardData && event.clipboardData.getData("text") || "";
+      event.preventDefault();
+      pushDigits(text);
+    });
+    paste.addEventListener("input", function () {
+      if (paste.value) pushDigits(paste.value);
+    });
+    document.addEventListener("paste", function (event) {
+      var target = event.target;
+      if (target && (target.id === "vcom-link-name" || (target.tagName === "INPUT" && target.id !== "vcom-dial-paste") || target.tagName === "TEXTAREA")) return;
+      if ((window.__vcomDrawerX || 0) > 0.2) return;
+      var text = event.clipboardData && event.clipboardData.getData("text") || "";
+      if (!/\d/.test(text)) return;
+      event.preventDefault();
+      pushDigits(text);
+    });
+    var open = menu.querySelector("#vcom-link-open");
+    var form = menu.querySelector("#vcom-link-form");
+    var banner = menu.querySelector("#vcom-link-banner");
+    var nameInput = menu.querySelector("#vcom-link-name");
+    var error = menu.querySelector("[data-error]");
+    var composing = false;
+    window.__vcomGuestBook = window.__vcomGuestBook || {};
+    var watched = {};
+    var busy = false;
+    var remote = document.createElement("audio");
+    remote.id = "vcom-guest-caller";
+    remote.autoplay = true;
+    remote.setAttribute("playsinline", "true");
+    remote.hidden = true;
+    document.body.appendChild(remote);
+    function addCallerVideo(id, muted) {
+      var el = document.createElement("video");
+      el.id = id;
+      el.autoplay = true;
+      el.muted = muted;
+      el.playsInline = true;
+      el.setAttribute("playsinline", "true");
+      el.hidden = true;
+      document.body.appendChild(el);
+      return el;
+    }
+    addCallerVideo("vcom-guest-remote-video", true);
+    addCallerVideo("vcom-guest-local-video", true);
+
+    function fsNow() {
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.getFirestore || !fs.doc || !fs.setDoc || !fs.updateDoc || !fs.getDoc) return null;
+      return fs;
+    }
+    function visibleRows() {
+      var now = Date.now();
+      return Object.keys(window.__vcomGuestBook).map(function (phone) {
+        return window.__vcomGuestBook[phone];
+      }).filter(function (row) {
+        if (!row) return false;
+        if (row.status === "active") return true;
+        if (row.status === "ended") return false;
+        return row.expiresAt > now;
+      }).sort(function (a, b) { return b.expiresAt - a.expiresAt; });
+    }
+    function currentRow() {
+      var rows = visibleRows();
+      for (var i = 0; i < rows.length; i++) if (rows[i].status === "active") return rows[i];
+      return rows[0] || null;
+    }
+    function render() {
+      var row = currentRow();
+      banner.hidden = !row;
+      banner.replaceChildren();
+      if (!row) return;
+      var card = document.createElement("div");
+      card.className = "vcom-link-live";
+      var name = document.createElement("div");
+      name.className = "vcom-link-guest";
+      name.textContent = row.name || "";
+      var phone = document.createElement("div");
+      phone.className = "vcom-link-phone";
+      phone.dir = "ltr";
+      phone.textContent = pretty(row.phone);
+      var meta = document.createElement("div");
+      meta.className = "vcom-link-meta";
+      meta.textContent = row.status === "active" ? "בשיחה" : untilClock(row.expiresAt);
+      var copyLink = document.createElement("button");
+      copyLink.type = "button";
+      copyLink.className = "vcom-link-copy";
+      copyLink.textContent = "העתק קישור שיחה";
+      copyLink.addEventListener("click", function () {
+        clip(row.url);
+        copyLink.textContent = "הועתק";
+        setTimeout(function () { if (copyLink.isConnected) copyLink.textContent = "העתק קישור שיחה"; }, 1500);
+      });
+      var lastTap = 0;
+      function copyPhone() {
+        clip(digits(row.phone));
+      }
+      phone.addEventListener("dblclick", function (event) {
+        event.preventDefault();
+        copyPhone();
+      });
+      phone.addEventListener("touchend", function (event) {
+        var now = Date.now();
+        if (now - lastTap < 350) {
+          event.preventDefault();
+          lastTap = 0;
+          copyPhone();
+        } else lastTap = now;
+      });
+      card.appendChild(name);
+      card.appendChild(phone);
+      card.appendChild(meta);
+      card.appendChild(copyLink);
+      banner.appendChild(card);
+    }
+    function watch(code) {
+      var fs = fsNow();
+      if (!fs || watched[code] || !fs.onSnapshot) return;
+      watched[code] = fs.onSnapshot(fs.doc(fs.getFirestore(), "guestLinks", code), function (snap) {
+        var data = snap.exists() ? snap.data() || {} : null;
+        var phone = digits(data && data.tempPhone);
+        var row = phone && window.__vcomGuestBook[phone];
+        if (!row || row.code !== code) {
+          Object.keys(window.__vcomGuestBook).forEach(function (key) {
+            if (window.__vcomGuestBook[key].code === code) row = window.__vcomGuestBook[key];
+          });
+        }
+        if (!row) return;
+        if (!data) row.status = "ended";
+        else {
+          row.status = data.status || row.status;
+          row.expiresAt = data.expiresAt || row.expiresAt;
+          row.fromLink = true;
+        }
+        render();
+      }, function () {});
+    }
+    function forget(row) {
+      var fs = fsNow();
+      delete window.__vcomGuestBook[row.phone];
+      render();
+      if (!fs || !window.__vcomUid) return;
+      var patch = {};
+      patch["guestLinks." + row.code] = fs.deleteField ? fs.deleteField() : { status: "ended", phone: row.phone, expiresAt: row.expiresAt, name: row.name || "" };
+      fs.updateDoc(fs.doc(fs.getFirestore(), "users", window.__vcomUid), patch).catch(function () {});
+      if (row.status !== "active") {
+        fs.updateDoc(fs.doc(fs.getFirestore(), "guestLinks", row.code), { status: "ended" }).catch(function () {});
+      }
+    }
+    function showForm(on) {
+      composing = on;
+      form.hidden = !on;
+      error.textContent = "";
+      if (on) nameInput.focus();
+    }
+    open.addEventListener("click", function () { showForm(!composing); });
+    var okButton = form.querySelector("[data-ok]");
+    function newestExpiry() {
+      var max = 0;
+      Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+        var row = window.__vcomGuestBook[phone];
+        if (row && row.expiresAt > max) max = row.expiresAt;
+      });
+      return max;
+    }
+    function finishIssue(generation) {
+      if (generation !== window.__vcomIssueGen || !busy) return;
+      busy = false;
+      showForm(false);
+      nameInput.value = "";
+      if (okButton.isConnected) okButton.textContent = "אישור";
+      render();
+    }
+    function confirmName(event) {
+      if (event) event.preventDefault();
+      if (busy) return;
+      var name = nameInput.value.replace(/^\s+|\s+$/g, "");
+      if (!name) {
+        error.textContent = "נא לרשום שם";
+        return;
+      }
+      busy = true;
+      error.textContent = "";
+      okButton.textContent = "רגע";
+      var generation = (window.__vcomIssueGen = (window.__vcomIssueGen || 0) + 1);
+      var seenExpiry = newestExpiry();
+      window.__vcomIssueSeen = seenExpiry;
+      var pending;
+      try { pending = issue(name); }
+      catch (err) { pending = Promise.reject(err); }
+      var timer = setTimeout(function () {
+        if (generation !== window.__vcomIssueGen || !busy) return;
+        if (newestExpiry() > seenExpiry) {
+          finishIssue(generation);
+          return;
+        }
+        busy = false;
+        if (okButton.isConnected) okButton.textContent = "אישור";
+        if (!error.textContent) error.textContent = "לא הצלחנו להנפיק קישור. נסה שוב.";
+      }, 12000);
+      Promise.resolve(pending).then(function () {
+        clearTimeout(timer);
+        finishIssue(generation);
+      }).catch(function (err) {
+        if (generation !== window.__vcomIssueGen) return;
+        clearTimeout(timer);
+        window.__vcomIssueErr = String(err && (err.code || err.message) || err);
+        error.textContent = "לא הצלחנו להנפיק קישור. נסה שוב.";
+      }).then(function () {
+        if (generation !== window.__vcomIssueGen) return;
+        clearTimeout(timer);
+        busy = false;
+        if (okButton.isConnected) okButton.textContent = "אישור";
+      });
+    }
+    form.addEventListener("submit", confirmName);
+    okButton.addEventListener("pointerup", confirmName);
+    okButton.addEventListener("touchend", confirmName);
+    function alphabetCode() {
+      var alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+      var bytes = new Uint8Array(6);
+      crypto.getRandomValues(bytes);
+      var out = "";
+      for (var i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % alphabet.length];
+      return out;
+    }
+    function issue(name) {
+      var fs = fsNow();
+      var uid = window.__vcomUid;
+      var profile = window.__vcomProfile || {};
+      if (!fs || !uid) return Promise.reject(new Error("auth"));
+      var db = fs.getFirestore();
+      var code = alphabetCode();
+      function pick(left) {
+        var phone = "020" + String(100000 + Math.floor(Math.random() * 900000));
+        return Promise.all([
+          fs.getDoc(fs.doc(db, "phoneNumbers", phone)),
+          fs.getDoc(fs.doc(db, "guestPhones", phone))
+        ]).then(function (snaps) {
+          if ((snaps[0] && snaps[0].exists && snaps[0].exists()) || (snaps[1] && snaps[1].exists && snaps[1].exists()) || window.__vcomGuestBook[phone]) {
+            if (left <= 1) throw new Error("phone");
+            return pick(left - 1);
+          }
+          return phone;
+        });
+      }
+      return pick(8).then(function (phone) {
+        var now = Date.now();
+        var data = {
+          code: code,
+          ownerId: uid,
+          ownerPhone: digits(profile.phone),
+          ownerName: name,
+          guestName: name,
+          tempPhone: phone,
+          status: "waiting",
+          createdAt: now,
+          expiresAt: now + TTL,
+          offer: null,
+          answer: null,
+          callerCandidates: [],
+          guestCandidates: [],
+          callStartedAt: null
+        };
+        return fs.setDoc(fs.doc(db, "guestPhones", phone), {
+          ownerId: uid,
+          code: code,
+          expiresAt: data.expiresAt
+        }).then(function () {
+          return fs.setDoc(fs.doc(db, "guestLinks", code), data);
+        }).then(function () {
+          var patch = {};
+          patch["guestLinks." + code] = { name: name, phone: phone, expiresAt: data.expiresAt, status: "waiting" };
+          return fs.updateDoc(fs.doc(db, "users", uid), patch).catch(function () {});
+        }).then(function () {
+          window.__vcomGuestBook[phone] = {
+            code: code,
+            name: name,
+            phone: phone,
+            expiresAt: data.expiresAt,
+            status: "waiting",
+            url: shareUrl(code),
+            local: true
+          };
+          watch(code);
+        });
+      });
+    }
+    function place() {
+      var rtl = String(document.documentElement.getAttribute("dir") || "").toLowerCase() === "rtl";
+      var width = Math.min((window.__vcomDrawerWidth >= 200 ? window.__vcomDrawerWidth : 304), 304, window.innerWidth);
+      var short = window.innerHeight < 560;
+      var top = short ? 120 : 170;
+      menu.style.width = width + "px";
+      menu.style.top = "calc(env(safe-area-inset-top, 0px) + " + top + "px)";
+      menu.style.bottom = "auto";
+      menu.style.maxHeight = "calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - " + (top + 88) + "px)";
+      menu.style.right = rtl ? "0px" : "auto";
+      menu.style.left = rtl ? "auto" : "0px";
+      return { rtl: rtl, width: width };
+    }
+    function applyDrawer(value) {
+      var x = Number(value);
+      if (!isFinite(x)) x = 0;
+      if (x < 0) x = 0;
+      if (x > 1) x = 1;
+      window.__vcomDrawerX = x;
+      var gate = document.getElementById("vcom-approval");
+      var blocked = gate && !gate.hidden;
+      var onCall = !!window.__vcomRinging;
+      try {
+        var view = window.__vcomBloc && window.__vcomBloc.c;
+        if (view && view.gnY && view.gnY()) onCall = true;
+        if (view && view.b) onCall = true;
+      } catch (e) {}
+      var allow = !!window.__vcomUid && !blocked && !onCall;
+      var visible = allow && x > 0.02;
+      menu.hidden = !visible;
+      paste.hidden = !window.__vcomUid || blocked || onCall || x > 0.02 || (window.__vcomTab | 0) !== 0;
+      var width = Math.min((window.__vcomDrawerWidth >= 200 ? window.__vcomDrawerWidth : 304), 304, window.innerWidth);
+      logo.hidden = !visible;
+      if (visible) {
+        var spot = place();
+        var shift = (1 - x) * spot.width;
+        menu.style.transform = "translate3d(" + (spot.rtl ? shift : -shift) + "px,0,0)";
+        logo.style.left = (window.innerWidth - width * x + 10) + "px";
+        logo.style.top = "calc(env(safe-area-inset-top, 0px) + 10px)";
+      } else menu.style.transform = "";
+    }
+    window.__vcomDrawerMove = applyDrawer;
+    function frame() {
+      applyDrawer(window.__vcomDrawerX);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+    function tick() {
+      var now = Date.now();
+      Object.keys(window.__vcomGuestBook).forEach(function (phone) {
+        var row = window.__vcomGuestBook[phone];
+        if (!row || row.status === "active") return;
+        if (row.expiresAt > now) return;
+        forget(row);
+      });
+      var row = currentRow();
+      var meta = banner.querySelector(".vcom-link-meta");
+      if (!row) {
+        if (!banner.hidden) render();
+      } else if (!meta) render();
+      else meta.textContent = row.status === "active" ? "בשיחה" : untilClock(row.expiresAt);
+    }
+    setInterval(tick, 1000);
+    function bindUser() {
+      var fs = fsNow();
+      var auth = window.firebase_auth;
+      if (!fs || !auth || !auth.getAuth || !auth.onAuthStateChanged || !fs.onSnapshot) return false;
+      auth.onAuthStateChanged(auth.getAuth(), function (user) {
+        window.__vcomUid = user ? user.uid : "";
+        if (!user) {
+          window.__vcomGuestBook = {};
+          window.__vcomProfile = {};
+          render();
+          return;
+        }
+        fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
+          var data = snap.exists() ? snap.data() || {} : {};
+          window.__vcomProfile = {
+            name: data.name || data.displayName || "",
+            phone: data.phoneNumber || ""
+          };
+          var links = data.guestLinks || {};
+          Object.keys(links).forEach(function (code) {
+            var row = links[code] || {};
+            var phone = digits(row.phone);
+            if (!phone) return;
+            var prev = window.__vcomGuestBook[phone];
+            window.__vcomGuestBook[phone] = {
+              code: code,
+              name: row.name || (prev && prev.name) || "",
+              phone: phone,
+              expiresAt: prev && prev.fromLink ? prev.expiresAt : (row.expiresAt || (prev && prev.expiresAt) || 0),
+              status: prev && prev.fromLink ? prev.status : (row.status || "waiting"),
+              url: shareUrl(code),
+              fromLink: !!(prev && prev.fromLink)
+            };
+            watch(code);
+          });
+          render();
+          if (busy && newestExpiry() > (window.__vcomIssueSeen || 0)) finishIssue(window.__vcomIssueGen);
+        }, function () {});
+      });
+      return true;
+    }
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      if (bindUser() || tries > 80) clearInterval(timer);
+    }, 400);
+
+    window.vcomStartGuestCall = function (code, video) {
+      window.__vcomGuestStarted = code;
+      var token = (window.__vcomGuestToken || 0) + 1;
+      window.__vcomGuestToken = token;
+      window.__vcomGuestActive = code;
+      var wantVideo = !!video;
+      window.__vcomGuestVideo = wantVideo;
+      var audioAsk = { echoCancellation: true, noiseSuppression: true };
+      var media = navigator.mediaDevices.getUserMedia({
+        audio: audioAsk,
+        video: wantVideo ? { facingMode: "user" } : false
+      });
+      startCaller(token, code, media, wantVideo);
+    };
+    window.vcomEndGuestCall = function () {
+      window.__vcomGuestToken = (window.__vcomGuestToken || 0) + 1;
+      finishCaller(true);
+      if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+    };
+  }
+
+  var caller = null;
+  function finishCaller(write) {
+    stopBack();
+    var current = caller;
+    caller = null;
+    if (!current) return;
+    current.closed = true;
+    try { current.pc.close(); } catch (e) {}
+    if (current.local) current.local.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+    current.local = null;
+    if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+    var remote = document.getElementById("vcom-guest-caller");
+    if (remote) remote.srcObject = null;
+    ["vcom-guest-remote-video", "vcom-guest-local-video"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.srcObject = null;
+      el.hidden = true;
+    });
+    if (write && current.fs && current.ref) {
+      current.fs.updateDoc(current.ref, { status: "ended" }).catch(function () {});
+    }
+    var row = null;
+    Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+      if (window.__vcomGuestBook[phone].code === current.code) row = window.__vcomGuestBook[phone];
+    });
+    if (row && row.status === "active") row.status = "ended";
+  }
+  var backTimer = null;
+  function stopBack() {
+    if (backTimer) clearInterval(backTimer);
+    backTimer = null;
+    if (window.vcomStopRingback) window.vcomStopRingback();
+  }
+  function startBack() {
+    if (window.vcomStartRingback) window.vcomStartRingback();
+  }
+  function startCaller(token, code, mediaPromise, video) {
+    var fs = window.firebase_firestore;
+    if (!fs) return;
+    finishCaller(false);
+    var pc = new RTCPeerConnection(ICE);
+    var ref = fs.doc(fs.getFirestore(), "guestLinks", code);
+    caller = { pc: pc, fs: fs, ref: ref, code: code, local: null, closed: false, seen: {}, queued: [], remoteSet: false, video: !!video };
+    var current = caller;
+    startBack();
+    pc.onicecandidate = function (event) {
+      if (!event.candidate || current.closed || token !== window.__vcomGuestToken) return;
+      var item = {
+        candidate: event.candidate.candidate,
+        sdpMid: event.candidate.sdpMid,
+        sdpMLineIndex: event.candidate.sdpMLineIndex
+      };
+      fs.updateDoc(ref, { callerCandidates: fs.arrayUnion(item) }).catch(function () {});
+    };
+    pc.ontrack = function (event) {
+      var stream = event.streams[0];
+      var audio = document.getElementById("vcom-guest-caller");
+      if (audio) {
+        audio.srcObject = stream;
+        var play = audio.play();
+        if (play && play.catch) play.catch(function () {});
+      }
+      var remoteVideo = document.getElementById("vcom-guest-remote-video");
+      if (remoteVideo && stream && stream.getVideoTracks && stream.getVideoTracks().length) {
+        remoteVideo.srcObject = stream;
+        remoteVideo.muted = true;
+        remoteVideo.hidden = false;
+        var showRemote = remoteVideo.play();
+        if (showRemote && showRemote.catch) showRemote.catch(function () {});
+      }
+      if (window.vcomRouteOutputs) window.vcomRouteOutputs();
+    };
+    pc.onconnectionstatechange = function () {
+      if (current.closed || token !== window.__vcomGuestToken) return;
+      if (pc.connectionState === "connected") {
+        stopBack();
+        fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
+        if (window.__vcomSetCallPhase) window.__vcomSetCallPhase("active");
+        var row = findRow(code);
+        if (row) row.status = "active";
+      }
+    };
+    fs.onSnapshot(ref, function (snap) {
+      if (current.closed || token !== window.__vcomGuestToken) return;
+      var data = snap.exists() ? snap.data() || {} : null;
+      if (!data || data.status === "ended") {
+        finishCaller(false);
+        if (window.__vcomSetCallPhase) window.__vcomSetCallPhase("ended");
+        return;
+      }
+      if (data.answer && !current.remoteSet) {
+        current.remoteSet = true;
+        pc.setRemoteDescription(data.answer).then(function () {
+          current.queued.splice(0).forEach(addCandidate);
+          if (window.__vcomSetCallPhase) window.__vcomSetCallPhase("connecting");
+        }).catch(function () {});
+      }
+      (data.guestCandidates || []).forEach(addCandidate);
+      if (data.status === "active" && window.__vcomSetCallPhase) window.__vcomSetCallPhase("active");
+    }, function () {});
+    function addCandidate(item) {
+      if (!item) return;
+      var key = JSON.stringify(item);
+      if (current.seen[key]) return;
+      if (!pc.remoteDescription) { current.queued.push(item); return; }
+      current.seen[key] = true;
+      pc.addIceCandidate(item).catch(function () {});
+    }
+    var muteTimer = setInterval(function () {
+      if (current.closed || !current.local) {
+        if (current.closed) clearInterval(muteTimer);
+        return;
+      }
+      var muted = false;
+      try { muted = !!(window.__vcomBloc && window.__vcomBloc.at && window.__vcomBloc.at.ay); } catch (e) {}
+      current.local.getAudioTracks().forEach(function (track) { track.enabled = !muted; });
+    }, 300);
+    mediaPromise.then(function (stream) {
+      if (current.closed || token !== window.__vcomGuestToken) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        return null;
+      }
+      current.local = stream;
+      var localVideo = document.getElementById("vcom-guest-local-video");
+      if (localVideo && stream.getVideoTracks && stream.getVideoTracks().length) {
+        localVideo.srcObject = stream;
+        localVideo.muted = true;
+        localVideo.hidden = false;
+        var showLocal = localVideo.play();
+        if (showLocal && showLocal.catch) showLocal.catch(function () {});
+      }
+      stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
+      return pc.createOffer();
+    }).then(function (offer) {
+      if (!offer || current.closed || token !== window.__vcomGuestToken) return null;
+      return pc.setLocalDescription(offer).then(function () { return offer; });
+    }).then(function (offer) {
+      if (!offer || current.closed || token !== window.__vcomGuestToken) return null;
+      var row = findRow(code);
+      if (row && row.expiresAt <= Date.now() && row.status !== "active") throw new Error("expired");
+      var patch = { status: "ringing", offer: { type: offer.type, sdp: offer.sdp }, video: !!current.video };
+      return fs.updateDoc(ref, patch);
+    }).catch(function (err) {
+      window.__vcomGuestErr = String(err && (err.code || err.message) || err);
+      if (token !== window.__vcomGuestToken) return;
+      finishCaller(true);
+      if (window.__vcomSetCallPhase) window.__vcomSetCallPhase("ended");
+    });
+  }
+  function findRow(code) {
+    var found = null;
+    Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+      if (window.__vcomGuestBook[phone].code === code) found = window.__vcomGuestBook[phone];
+    });
+    return found;
+  }
+
+  function issuerCss() {
+    return ""
+      + "#vcom-link-menu{position:fixed;z-index:80;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:0 16px 8px;overflow:visible;direction:rtl;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E;touch-action:manipulation}"
+      + "#vcom-menu-logo{position:fixed;z-index:85;width:52px;height:52px;object-fit:contain;pointer-events:none;background:transparent;border:0;border-radius:0;box-shadow:none;padding:0}"
+      + "#vcom-link-menu[hidden],#vcom-link-form[hidden],#vcom-link-banner[hidden],#vcom-dial-paste[hidden],#vcom-menu-logo[hidden]{display:none!important}"
+      + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
+      + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
+      + "#vcom-link-open{display:block;width:100%;box-sizing:border-box;margin:0;padding:14px 16px;border:0;border-radius:16px;background:#F2F2F7;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-link-form{display:flex;flex-direction:column;gap:8px;margin:0}"
+      + "#vcom-link-name{width:100%;box-sizing:border-box;border:1px solid #E5E5EA;border-radius:12px;background:#fff;color:#1C1C1E;padding:12px 14px;font:16px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + ".vcom-link-error{min-height:18px;margin:0;color:#C62828;font-size:13px;text-align:right}"
+      + "#vcom-link-form [data-ok]{min-height:44px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;touch-action:manipulation}"
+      + ".vcom-link-live{background:#F2F2F7;border-radius:16px;padding:12px 14px;text-align:right}"
+      + ".vcom-link-guest{font-size:16px;font-weight:700}"
+      + ".vcom-link-copy{display:block;width:100%;box-sizing:border-box;min-height:44px;margin-top:8px;border:0;border-radius:12px;background:#007AFF;color:#fff;padding:0 12px;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + ".vcom-link-phone{display:block;width:100%;margin-top:8px;font-size:22px;font-weight:700;letter-spacing:.4px;direction:ltr;unicode-bidi:isolate;text-align:right;white-space:nowrap;touch-action:manipulation}"
+      + ".vcom-link-meta{display:block;margin-top:4px;color:#007AFF;font-size:14px;font-weight:600;text-align:right}"
+      + "#vcom-guest-remote-video{position:fixed;left:0;top:0;width:100%;height:calc(100dvh - 200px);object-fit:cover;z-index:35;background:#111;pointer-events:none}"
+      + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 72px);left:16px;width:112px;height:156px;object-fit:cover;border-radius:16px;z-index:36;background:#222;transform:scaleX(-1);pointer-events:none}"
+      + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}";
+  }
+  function guestCss() {
+    return ""
+      + "#vcom-guest{position:fixed;inset:0;z-index:10000;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E}"
+      + "#vcom-guest [hidden]{display:none!important}"
+      + ".guest-wait{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(180deg,#EAF6FF 0%,#7EC8F8 100%);text-align:center;padding:24px}"
+      + ".guest-wait img{width:min(220px,46vw);height:auto;transform-origin:50% 55%;animation:vcom-ring 1.15s ease-in-out infinite}"
+      + ".guest-wait h1{margin:18px 0 0;color:#fff;font-size:clamp(40px,8vw,52px)}"
+      + ".guest-wait p{margin:14px 0 0;color:#fff;font-size:clamp(22px,5vw,28px);font-weight:600}"
+      + ".guest-call{position:relative;box-sizing:border-box;height:100dvh;height:100svh;display:flex;flex-direction:column;overflow:hidden;background:#F2F2F7;padding:calc(env(safe-area-inset-top,0px) + 56px) 24px calc(env(safe-area-inset-bottom,0px) + 84px)}"
+      + ".guest-logo{display:flex;justify-content:center;align-items:center;margin:8px 0 0;font-size:28px;font-weight:400;line-height:1;letter-spacing:0}"
+      + ".guest-logo .v{color:#34C759}"
+      + ".guest-logo .com{color:#007AFF}"
+      + ".guest-stage{position:absolute;inset:0;z-index:0;background:#111}"
+      + ".guest-stage [data-remote]{width:100%;height:100%;object-fit:cover;background:#111}"
+      + ".guest-stage [data-local]{position:absolute;top:calc(env(safe-area-inset-top,0px) + 88px);left:16px;width:112px;height:156px;object-fit:cover;border-radius:16px;transform:scaleX(-1);background:#222}"
+      + ".guest-call header,.guest-mid,.guest-controls{position:relative;z-index:1}"
+      + ".guest-call.video .guest-mid h2,.guest-call.video .guest-mid p{color:#fff;text-shadow:0 1px 8px rgba(0,0,0,.65)}"
+      + ".guest-mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}"
+      + ".guest-mid h2{margin:0;font-size:clamp(28px,7vw,40px)}"
+      + ".guest-mid p{margin:10px 0 0;color:#8E8E93;font-size:clamp(18px,4vw,22px)}"
+      + ".guest-controls{display:flex;justify-content:center;gap:clamp(18px,6vw,36px);align-items:flex-end}"
+      + ".guest-controls button{width:74px;height:74px;border:0;border-radius:50%;color:#fff;font-size:15px;font-weight:700}"
+      + ".guest-controls .answer{background:#34C759}"
+      + ".guest-controls .hang{background:#FF3B30}"
+      + ".guest-controls .tool{background:#E5E5EA;color:#1C1C1E}"
+      + ".guest-controls .tool.on{background:#007AFF;color:#fff}"
+      + ".guest-dead{min-height:100dvh;display:flex;flex-direction:column;align-items:center;background:#F2F2F7;text-align:center;padding:calc(env(safe-area-inset-top,0px) + 36px) 22px calc(env(safe-area-inset-bottom,0px) + 28px)}"
+      + ".guest-dead.after-call{justify-content:center}"
+      + ".guest-dead:not(.after-call){justify-content:flex-start;padding-top:18vh}"
+      + ".guest-dead .guest-logo{margin:0 0 18px;font-size:34px}"
+      + ".guest-expired{margin:0;color:#3A3A3C;font-size:18px;font-weight:600}"
+      + ".guest-join{appearance:none;-webkit-appearance:none;margin-top:22px;border:0;background:#fff;color:#3A3A3C;border-radius:16px;padding:10px 16px;font:600 14px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 24px rgba(28,39,61,.08);max-width:min(340px,100%)}"
+      + ".guest-dead:not(.after-call) .guest-join{margin-top:auto}"
+      + ".guest-join .vcom-word{display:inline-block;margin:0 4px}"
+      + ".guest-join .v{color:#34C759;font-weight:700}"
+      + ".guest-join .com{color:#007AFF;font-weight:700}";
+  }
+  function guestHtml() {
+    return ''
+      + '<section class="guest-wait" data-view="wait"><img src="/icons/vcom-splash.png?v=call11" alt="VCOM"><h1>VCOM</h1><p>המתן לשיחה</p></section>'
+      + '<section class="guest-call" data-view="call" hidden><div class="guest-stage" data-stage hidden><video data-remote autoplay playsinline></video><video data-local autoplay playsinline muted></video></div><header class="guest-logo" aria-label="VCOM"><span class="com">COM</span><span class="v">V</span></header><div class="guest-mid"><h2 data-name></h2><p data-status>שיחה נכנסת</p><p data-timer hidden>0:00</p></div>'
+      + '<div class="guest-controls"><button type="button" class="tool" data-speaker hidden>רמקול</button><button type="button" class="answer" data-answer>ענה</button><button type="button" class="hang" data-decline>דחה</button><button type="button" class="hang" data-hang hidden>נתק</button><button type="button" class="tool" data-mute hidden>השתק</button></div></section>'
+      + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה לא בתוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join>מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</button></section>';
+  }
+})();

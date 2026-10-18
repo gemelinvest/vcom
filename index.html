@@ -5,15 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"/>
   <title>VCOM</title>
   <meta name="description" content="VCOM — שיחות קול מהאייפון"/>
+  <meta property="og:site_name" content="VCOM"/>
+  <meta property="og:title" content="VCOM"/>
+  <meta property="og:description" content="VCOM — שיחות קול מהאייפון"/>
+  <meta property="og:image" content="https://cdn.jsdelivr.net/gh/gemelinvest/vcom@12a6e22/icons/vcom-share.png"/>
+  <meta property="og:image:width" content="512"/>
+  <meta property="og:image:height" content="512"/>
+  <meta property="og:type" content="website"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:image" content="https://cdn.jsdelivr.net/gh/gemelinvest/vcom@12a6e22/icons/vcom-share.png"/>
   <meta name="theme-color" content="#F4F6FB"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
   <meta name="apple-mobile-web-app-title" content="VCOM"/>
   <link rel="manifest" href="./manifest.webmanifest"/>
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png"/>
-  <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png"/>
-  <link rel="apple-touch-icon" href="./apple-touch-icon.png"/>
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=keypad3"/>
+  <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png?v=keypad3"/>
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png?v=keypad3"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=keypad3"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
@@ -156,6 +166,15 @@
         </button>
       </nav>
     </section>
+
+    <section id="screen-pending" class="screen pending-screen" hidden>
+      <div class="vcom-approval-card">
+        <img class="brand-badge" src="./icons/vcom-blue-192.png" width="84" height="84" alt=""/>
+        <h2>הבקשה נשלחה בהצלחה</h2>
+        <p>אנו נעדכן כאן שהמנוי שלך אושר.<br>בברכה, צוות <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></p>
+        <button type="button" class="text-link" id="pending-logout">התנתק</button>
+      </div>
+    </section>
   </div>
 
   <!-- CALL OVERLAY -->
@@ -196,7 +215,18 @@
   <audio id="remote-audio" autoplay playsinline></audio>
   <div id="toast" class="toast" hidden></div>
 
+  <div id="vcom-update" hidden>
+    <span>קיימת גרסה חדשה לאפליקציה</span>
+    <button id="vcom-update-go" type="button">עדכון</button>
+  </div>
+
+  <section id="demo-guest-dead" class="guest-dead-demo" hidden>
+    <header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header>
+    <p class="guest-expired" id="demo-expired">לינק שיחה לא בתוקף</p>
+    <button type="button" class="guest-join" id="demo-join">מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</button>
+  </section>
+
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="./app.js"></script>
+  <script src="./app.js?v=mic2"></script>
 </body>
 </html>

@@ -4,6 +4,8 @@
   var USERS_KEY = "vcom.users.v1";
   var SESSION_KEY = "vcom.session.v1";
   var RECENTS_KEY = "vcom.recents.v1";
+  var MEDIA_KEY = "vcom.media.granted.v1";
+  var REVISION_KEY = "vcom_revision";
 
   var DEMO_CONTACTS = [
     { name: "דמו VCOM", subtitle: "שיחת הדגמה במכשיר", peer: "demo", kind: "sim" },
@@ -24,7 +26,9 @@
     currentCall: null,
     timer: null,
     startedAt: 0,
-    incoming: null
+    incoming: null,
+    captureGen: 0,
+    callTimers: []
   };
 
   function $(id) { return document.getElementById(id); }
@@ -81,7 +85,7 @@
 
   function go(screen) {
     state.screen = screen;
-    ["welcome", "register", "login", "app"].forEach(function (name) {
+    ["welcome", "register", "login", "app", "pending"].forEach(function (name) {
       show($("screen-" + name), name === screen);
     });
     if (screen === "app") renderApp();
@@ -142,15 +146,16 @@
           name: displayName(email),
           passHash: passHash,
           code: formatCode(emailHash),
-          peerId: peerIdFromHex(emailHash)
+          peerId: peerIdFromHex(emailHash),
+          pending: true
         };
         users.push(user);
         saveJson(USERS_KEY, users);
         setSession(user);
-        go("app");
-        connectPeer();
-        toast("נרשמתם בהצלחה");
+        go("pending");
       });
+    }).catch(function () {
+      setError("reg-error", "לא ניתן להשלים הרשמה כרגע");
     });
   });
 
@@ -165,8 +170,11 @@
     sha256(pass).then(function (hash) {
       if (hash !== user.passHash) return setError("login-error", "סיסמה שגויה");
       setSession(user);
-      go("app");
-      connectPeer();
+      if (user.pending) go("pending");
+      else {
+        go("app");
+        connectPeer();
+      }
     });
   });
 
@@ -321,16 +329,116 @@
     ringTone.ctx = ctx; ringTone.osc = osc;
   }
 
+  function stopTracks(stream) {
+    if (!stream || !stream.getTracks) return;
+    stream.getTracks().forEach(function (track) {
+      try { track.stop(); } catch (e) {}
+    });
+  }
+
+  function clearCallTimers() {
+    (state.callTimers || []).forEach(function (id) { clearTimeout(id); });
+    state.callTimers = [];
+    clearInterval(state.timer);
+    state.timer = null;
+  }
+
+  function stopPeerSenders(call) {
+    var pc = call && (call.peerConnection || call._pc || call.pc);
+    if (!pc || !pc.getSenders) return;
+    try {
+      pc.getSenders().forEach(function (sender) {
+        if (sender && sender.track) {
+          try { sender.track.stop(); } catch (e) {}
+        }
+      });
+    } catch (e) {}
+  }
+
+  function releaseCapture() {
+    state.captureGen += 1;
+    stopTracks(state.localStream);
+    state.localStream = null;
+    stopPeerSenders(state.currentCall);
+    document.querySelectorAll("audio, video").forEach(function (el) {
+      stopTracks(el.srcObject);
+      el.srcObject = null;
+      try { el.pause(); } catch (e) {}
+    });
+  }
+
   function ensureMic() {
-    if (state.localStream) return Promise.resolve(state.localStream);
+    var gen = state.captureGen;
+    if (state.localStream) {
+      var live = state.localStream.getTracks().some(function (track) {
+        return track.readyState !== "ended";
+      });
+      if (live) return Promise.resolve(state.localStream);
+      state.localStream = null;
+    }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       return Promise.reject(new Error("אין גישה למיקרופון בדפדפן זה"));
     }
     return navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(function (stream) {
+      if (gen !== state.captureGen) {
+        stopTracks(stream);
+        return Promise.reject(new Error("call-ended"));
+      }
+      rememberMedia(stream);
       state.localStream = stream;
       return stream;
     });
   }
+
+  function mediaGranted() {
+    try { return JSON.parse(localStorage.getItem(MEDIA_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function rememberMedia(stream) {
+    var prev = mediaGranted();
+    var next = {
+      audio: !!(prev.audio || (stream && stream.getAudioTracks && stream.getAudioTracks().length)),
+      video: !!(prev.video || (stream && stream.getVideoTracks && stream.getVideoTracks().length))
+    };
+    try { localStorage.setItem(MEDIA_KEY, JSON.stringify(next)); } catch (e) {}
+  }
+
+  (function wrapGetUserMedia() {
+    var devices = navigator.mediaDevices;
+    if (!devices || !devices.getUserMedia) return;
+    var raw = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = function (constraints) {
+      var gen = state.captureGen;
+      var askedAudio = !!(constraints && constraints.audio);
+      var askedVideo = !!(constraints && constraints.video);
+      var mem = mediaGranted();
+      var gestured = !navigator.userActivation || navigator.userActivation.isActive;
+      var run = function (spec) {
+        return raw(spec).then(function (stream) {
+          if (gen !== state.captureGen) {
+            stopTracks(stream);
+            return Promise.reject(new Error("call-ended"));
+          }
+          rememberMedia(stream);
+          return stream;
+        });
+      };
+      if (askedAudio && gestured && !mem.video) {
+        return run({ audio: constraints.audio, video: { facingMode: "user" } }).then(function (stream) {
+          rememberMedia(stream);
+          stopTracks(stream);
+          return run(constraints);
+        }).catch(function () { return run(constraints); });
+      }
+      return run(constraints);
+    };
+  })();
+
+  setInterval(function () {
+    var callOn = $("call-layer") && !$("call-layer").hidden;
+    var incomingOn = $("incoming-layer") && !$("incoming-layer").hidden;
+    if (callOn || incomingOn || state.currentCall || state.incoming) return;
+    if (state.localStream) releaseCapture();
+  }, 1000);
 
   function setMute(on) {
     if (state.localStream) {
@@ -351,21 +459,23 @@
     try { audio.play(); } catch (e) {}
   });
   $("btn-hangup").addEventListener("click", hangup);
-  $("btn-decline").addEventListener("click", function () {
-    if (state.incoming && state.incoming.call) try { state.incoming.call.close(); } catch (e) {}
+  $("btn-decline").addEventListener("click", hangup);
+  $("btn-accept").addEventListener("click", function () {
+    var inc = state.incoming;
     state.incoming = null;
     show($("incoming-layer"), false);
     ringTone(false);
-  });
-  $("btn-accept").addEventListener("click", function () {
-    var inc = state.incoming;
-    show($("incoming-layer"), false);
-    ringTone(false);
     if (!inc) return;
+    var gen = state.captureGen;
     ensureMic().then(function (stream) {
+      if (gen !== state.captureGen) {
+        stopTracks(stream);
+        return;
+      }
       inc.call.answer(stream);
       bindMediaCall(inc.call, inc.name || "שיחה נכנסת", "in");
     }).catch(function (err) {
+      if (err && err.message === "call-ended") return;
       toast(err.message || "לא ניתן לענות");
     });
   });
@@ -391,19 +501,28 @@
   }
 
   function hangup() {
-    clearInterval(state.timer);
-    ringTone(false);
-    if (state.currentCall) try { state.currentCall.close(); } catch (e) {}
-    state.currentCall = null;
-    state.call = null;
-    if (state.localStream) {
-      state.localStream.getTracks().forEach(function (t) { t.stop(); });
-      state.localStream = null;
+    if (hangup._busy) return;
+    hangup._busy = true;
+    try {
+      clearCallTimers();
+      ringTone(false);
+      var incoming = state.incoming;
+      state.incoming = null;
+      var call = state.currentCall;
+      state.currentCall = null;
+      state.call = null;
+      if (incoming && incoming.call && incoming.call !== call) {
+        try { incoming.call.close(); } catch (e) {}
+      }
+      releaseCapture();
+      if (call) try { call.close(); } catch (e) {}
+      show($("call-layer"), false);
+      show($("incoming-layer"), false);
+      $("btn-mute").classList.remove("is-on");
+      $("btn-mute").querySelector("span").textContent = "השתק";
+    } finally {
+      hangup._busy = false;
     }
-    var audio = $("remote-audio");
-    audio.srcObject = null;
-    show($("call-layer"), false);
-    show($("incoming-layer"), false);
   }
 
   function bindMediaCall(call, name, dir) {
@@ -421,20 +540,24 @@
   }
 
   function simulateCall(name) {
+    var gen = state.captureGen;
     openCallUi(name, "מחייג…");
     ringTone(true);
     pushRecent({ name: name, peer: name, kind: "out" });
     renderRecents();
-    setTimeout(function () {
+    state.callTimers.push(setTimeout(function () {
+      if (gen !== state.captureGen) return;
       ringTone(false);
       ensureMic().then(function () {
+        if (gen !== state.captureGen) return;
         $("call-state").textContent = "שיחת הדגמה · המיקרופון פעיל";
         startTimer();
       }).catch(function () {
+        if (gen !== state.captureGen) return;
         $("call-state").textContent = "שיחת הדגמה";
         startTimer();
       });
-    }, 1600);
+    }, 1600));
   }
 
   function lookupPeerId(target) {
@@ -458,23 +581,31 @@
         simulateCall(target.name);
         return;
       }
+      var gen = state.captureGen;
       ensureMic().then(function (stream) {
+        if (gen !== state.captureGen) {
+          stopTracks(stream);
+          return;
+        }
         openCallUi(target.name, "מחייג…");
         ringTone(true);
         var call = state.peer.call(pid, stream);
         call.on("stream", function () { ringTone(false); });
         bindMediaCall(call, target.name, "out");
-        setTimeout(function () {
+        state.callTimers.push(setTimeout(function () {
+          if (gen !== state.captureGen) return;
           if ($("call-state").textContent === "מחייג…" || $("call-state").textContent === "מתחבר…") {
             ringTone(false);
             $("call-state").textContent = "לא נענה · עובר להדגמה";
             ensureMic().then(function () {
+              if (gen !== state.captureGen) return;
               $("call-state").textContent = "שיחת הדגמה · המיקרופון פעיל";
               startTimer();
-            });
+            }).catch(function () {});
           }
-        }, 8000);
+        }, 8000));
       }).catch(function (err) {
+        if (err && err.message === "call-ended") return;
         toast(err.message || "לא ניתן לפתוח מיקרופון");
         simulateCall(target.name);
       });
@@ -493,6 +624,12 @@
         $("in-avatar").textContent = "V";
         show($("incoming-layer"), true);
         ringTone(true);
+        call.on("close", function () {
+          if (state.incoming && state.incoming.call === call) hangup();
+        });
+        call.on("error", function () {
+          if (state.incoming && state.incoming.call === call) hangup();
+        });
       });
       peer.on("error", function (err) {
         if (err && err.type === "unavailable-id") {
@@ -503,15 +640,85 @@
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(function () {});
+    navigator.serviceWorker.register("./sw.js?v=v5").catch(function () {});
+  }
+
+  function callOpen() {
+    return ($("call-layer") && !$("call-layer").hidden) || ($("incoming-layer") && !$("incoming-layer").hidden);
+  }
+  var pendingUpdate = 0;
+  function showUpdate(revision) {
+    pendingUpdate = revision;
+    if (callOpen()) return;
+    show($("vcom-update"), true);
+  }
+  function applyUpdate() {
+    var revision = pendingUpdate || Date.now();
+    try { localStorage.setItem(REVISION_KEY, String(revision)); } catch (e) {}
+    var done = function () { location.replace("./?upd=" + revision); };
+    if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistrations) {
+      done();
+      return;
+    }
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      return Promise.all(regs.map(function (reg) { return reg.unregister(); }));
+    }).then(function () {
+      if (!window.caches || !caches.keys) return;
+      return caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      });
+    }).then(done).catch(done);
+  }
+  if ($("vcom-update-go")) {
+    $("vcom-update-go").addEventListener("click", function (event) {
+      event.stopPropagation();
+      applyUpdate();
+    });
+  }
+  setInterval(function () {
+    if (pendingUpdate && !callOpen() && $("vcom-update") && $("vcom-update").hidden) {
+      show($("vcom-update"), true);
+    }
+  }, 700);
+
+  if ($("pending-logout")) {
+    $("pending-logout").addEventListener("click", function () {
+      setSession(null);
+      go("welcome");
+    });
+  }
+
+  (function demoGuestDead() {
+    var params = new URLSearchParams(location.search);
+    var panel = $("demo-guest-dead");
+    if (!panel) return;
+    var after = params.get("aftercall") === "1";
+    var expired = params.get("expired") === "1";
+    if (!after && !expired) return;
+    ["welcome", "register", "login", "app", "pending"].forEach(function (name) {
+      show($("screen-" + name), false);
+    });
+    panel.hidden = false;
+    panel.classList.toggle("after-call", after);
+    if ($("demo-expired")) $("demo-expired").hidden = after;
+    if ($("demo-join")) {
+      $("demo-join").addEventListener("click", function () { go("register"); panel.hidden = true; });
+    }
+  })();
+
+  if (new URLSearchParams(location.search).get("demoUpdate") === "1") {
+    showUpdate(Date.now());
   }
 
   var existing = restoreSession();
   if (existing) {
     setSession(existing);
-    go("app");
-    connectPeer();
-  } else {
+    if (existing.pending) go("pending");
+    else {
+      go("app");
+      connectPeer();
+    }
+  } else if (new URLSearchParams(location.search).get("aftercall") !== "1" && new URLSearchParams(location.search).get("expired") !== "1") {
     go("register");
   }
 })();

@@ -373,6 +373,108 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 
+#vcom-update {
+  position: fixed;
+  top: calc(var(--safe-t) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1C1C1E;
+  color: #fff;
+  border-radius: 16px;
+  padding: 10px 12px 10px 16px;
+  font-size: 15px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+  white-space: nowrap;
+}
+#vcom-update[hidden] { display: none !important; }
+#vcom-update button {
+  border: 0;
+  background: #007AFF;
+  color: #fff;
+  border-radius: 12px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 600;
+}
+
+.pending-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(24px + var(--safe-t)) 22px calc(28px + var(--safe-b));
+  background: #F2F2F7;
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+}
+.vcom-approval-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border-radius: 28px;
+  padding: 36px 28px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.08);
+}
+.vcom-approval-card h2 {
+  margin: 22px 0 8px;
+  font-size: 24px;
+  color: #1C1C1E;
+}
+.vcom-approval-card p {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.45;
+  color: #3A3A3C;
+}
+.vcom-word .v { color: #34C759; font-weight: 700; }
+.vcom-word .com { color: #007AFF; font-weight: 700; }
+
+.guest-dead-demo {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #F2F2F7;
+  text-align: center;
+  padding: calc(36px + var(--safe-t)) 22px calc(28px + var(--safe-b));
+}
+.guest-dead-demo.after-call { justify-content: center; }
+.guest-dead-demo:not(.after-call) { justify-content: flex-start; padding-top: 18vh; }
+.guest-dead-demo .guest-logo {
+  margin: 0 0 18px;
+  font-size: 34px;
+  font-weight: 400;
+  line-height: 1;
+}
+.guest-expired {
+  margin: 0;
+  color: #3A3A3C;
+  font-size: 18px;
+  font-weight: 600;
+}
+.guest-join {
+  appearance: none;
+  margin-top: 22px;
+  border: 0;
+  background: #fff;
+  color: #3A3A3C;
+  border-radius: 16px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  box-shadow: 0 8px 24px rgba(28, 39, 61, 0.08);
+  max-width: min(340px, 100%);
+}
+.guest-dead-demo:not(.after-call) .guest-join { margin-top: auto; }
+.guest-join .vcom-word { display: inline-block; margin: 0 4px; }
+
 @media (min-width: 720px) {
   .auth-screen { justify-content: center; }
   .app-screen { max-width: 480px; margin: 0 auto; }
