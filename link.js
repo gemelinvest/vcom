@@ -1,4 +1,5 @@
 (function () {
+  window.__VCOM_LINK_BUILD = "end4";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -506,14 +507,27 @@
     };
     var session = null;
     var started = 0;
-    var hadCallThisVisit = false;
-    function markHadCall() { hadCallThisVisit = true; }
+    var sawLiveThisVisit = false;
+    function markLive() { sawLiveThisVisit = true; }
     function showDead() {
-      if ((session && session.answered) || (nodes.call && !nodes.call.hidden)) markHadCall();
-      var afterCall = hadCallThisVisit;
+      if ((session && session.answered) || (nodes.call && !nodes.call.hidden)) markLive();
+      var afterCall = sawLiveThisVisit;
       if (nodes.deadView) nodes.deadView.classList.toggle("after-call", afterCall);
       if (nodes.expired) nodes.expired.hidden = afterCall;
+      if (nodes.deadText) nodes.deadText.hidden = true;
+      if (nodes.join) nodes.join.hidden = false;
       show("dead");
+    }
+    var endingVisit = false;
+    function endVisit(fs, ref) {
+      if (endingVisit) return;
+      endingVisit = true;
+      markLive();
+      window.vcomStopRing();
+      if (session) session.close();
+      if (window.vcomReleaseCapture) window.vcomReleaseCapture();
+      showDead();
+      if (fs && ref && fs.updateDoc) fs.updateDoc(ref, { status: "ended" }).catch(function () {});
     }
     function show(which) {
       nodes.wait.hidden = which !== "wait";
@@ -523,6 +537,9 @@
     function paint(data) {
       var grace = data && data.status === "ringing" ? 180000 : 0;
       var expired = !data || (data.status !== "active" && data.expiresAt + grace <= Date.now());
+      if (data && (data.status === "waiting" || data.status === "ringing" || data.status === "active" || data.offer)) {
+        markLive();
+      }
       if (!data || data.status === "ended" || expired) {
         window.vcomStopRing();
         if (nodes.stage) nodes.stage.hidden = true;
@@ -546,7 +563,7 @@
         nodes.hang.hidden = true;
         nodes.mute.hidden = true;
         nodes.speaker.hidden = true;
-        markHadCall();
+        markLive();
         show("call");
         window.vcomStartRing();
         return;
@@ -571,6 +588,7 @@
           db = fs.getFirestore(app);
         }
         var ref = fs.doc(db, "guestLinks", code);
+        window.__vcomGuestEndVisit = function () { endVisit(fs, ref); };
         fs.onSnapshot(ref, function (snap) {
           var data = snap.exists() ? snap.data() || {} : null;
           window.__vcomGuestData = data;
@@ -606,7 +624,7 @@
             return navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
           });
           session = openAnswer(fs, db, ref, data, media, remote, nodes);
-          markHadCall();
+          markLive();
           nodes.answer.hidden = true;
           nodes.decline.hidden = true;
           nodes.hang.hidden = false;
@@ -622,17 +640,10 @@
           });
         }
         nodes.decline.addEventListener("click", function () {
-          window.vcomStopRing();
-          markHadCall();
-          if (session) session.close();
-          if (window.vcomReleaseCapture) window.vcomReleaseCapture();
-          fs.updateDoc(ref, { status: "ended" }).catch(function () {});
+          endVisit(fs, ref);
         });
         nodes.hang.addEventListener("click", function () {
-          markHadCall();
-          if (session) session.close();
-          if (window.vcomReleaseCapture) window.vcomReleaseCapture();
-          fs.updateDoc(ref, { status: "ended" }).catch(function () {});
+          endVisit(fs, ref);
         });
         nodes.mute.addEventListener("click", function () {
           if (!session) return;
@@ -730,14 +741,16 @@
       if (play && play.catch) play.catch(function () {});
       showGuestVideo(nodes.remoteVideo, stream);
     };
+    var wasConnected = false;
     pc.onconnectionstatechange = function () {
       if (pc.connectionState === "connected") {
+        wasConnected = true;
         nodes.status.textContent = "בשיחה";
         nodes.timer.hidden = false;
         fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
       }
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-        nodes.status.textContent = "מתחבר...";
+      if (wasConnected && (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed")) {
+        if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
       }
     };
     mediaPromise.then(function (stream) {

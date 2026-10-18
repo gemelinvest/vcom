@@ -717,7 +717,7 @@
     var params = new URLSearchParams(location.search);
     var panel = $("demo-guest-dead");
     if (!panel) return;
-    var after = params.get("aftercall") === "1";
+    var after = params.get("aftercall") === "1" || params.get("declined") === "1";
     var expired = params.get("expired") === "1";
     if (!after && !expired) return;
     ["welcome", "register", "login", "app", "pending"].forEach(function (name) {
@@ -750,7 +750,7 @@
       go("app");
       connectPeer();
     }
-  } else if (new URLSearchParams(location.search).get("aftercall") !== "1" && new URLSearchParams(location.search).get("expired") !== "1") {
+  } else if (new URLSearchParams(location.search).get("aftercall") !== "1" && new URLSearchParams(location.search).get("declined") !== "1" && new URLSearchParams(location.search).get("expired") !== "1") {
     go("register");
   }
 })();
