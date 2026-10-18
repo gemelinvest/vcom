@@ -640,7 +640,7 @@
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=v5").catch(function () {});
+    navigator.serviceWorker.register("./sw.js?v=v6").catch(function () {});
   }
 
   function callOpen() {
