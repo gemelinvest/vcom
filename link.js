@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "end6";
+  window.__VCOM_LINK_BUILD = "ring1";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -34,6 +34,24 @@
   };
 
   function digits(value) { return String(value || "").replace(/\D/g, ""); }
+  function asMillis(value) {
+    if (value == null || value === "") return 0;
+    if (typeof value === "number" && isFinite(value)) return value < 1e12 ? value * 1000 : value;
+    if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+    try {
+      if (typeof value.toMillis === "function") return Number(value.toMillis()) || 0;
+    } catch (e) {}
+    if (typeof value.seconds === "number") return value.seconds * 1000;
+    var n = Number(value);
+    return isFinite(n) ? n : 0;
+  }
+  function keepFirestoreLive() {
+    if (guestCode) return;
+    if (document.visibilityState === "hidden") return;
+    var fs = window.firebase_firestore;
+    if (!fs || !fs.enableNetwork || !fs.getFirestore) return;
+    try { fs.enableNetwork(fs.getFirestore()).catch(function () {}); } catch (e) {}
+  }
   function pretty(phone) {
     var d = digits(phone);
     if (d.length === 9) return d.slice(0, 3) + "-" + d.slice(3);
@@ -363,14 +381,6 @@
     if (attachUpdateWatch.attached) return true;
     attachUpdateWatch.attached = true;
     if (fs.onSnapshot) fs.onSnapshot(ref, fromSnap, function () {});
-    attachUpdateWatch.poller = setInterval(function () {
-      if (guestCode) return;
-      if (window.__vcomPendingRevision && !isOnCall()) {
-        revealUpdateBar();
-        return;
-      }
-      if (fs.getDoc) fs.getDoc(ref).then(fromSnap).catch(function () {});
-    }, 2500);
     return true;
   }
   function wireUpdateBar() {
@@ -404,7 +414,7 @@
     }).observe(bar, { attributes: true, attributeFilter: ["hidden"] });
     setInterval(function () {
       if (window.__vcomPendingRevision || pendingUpdateRevision()) revealUpdateBar();
-    }, 700);
+    }, 4000);
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "visible") {
         offerUpdate(pendingUpdateRevision());
@@ -583,13 +593,28 @@
 
   window.vcomGuestCode = function (phone) {
     var key = digits(phone);
+    var raw = String(phone || "").replace(/^\s+|\s+$/g, "").toLowerCase();
     window.__vcomGuestLookups = window.__vcomGuestLookups || [];
-    if (window.__vcomGuestLookups.length < 20) window.__vcomGuestLookups.push(key);
-    var row = window.__vcomGuestBook && window.__vcomGuestBook[key];
-    if (!row || !row.code) return "";
-    if (row.status === "active") return row.code;
-    if (row.status === "ended") return "";
-    if (row.expiresAt > Date.now()) return row.code;
+    if (window.__vcomGuestLookups.length < 20) window.__vcomGuestLookups.push(key || raw);
+    var book = window.__vcomGuestBook || {};
+    function usable(row) {
+      if (!row || !row.code) return false;
+      if (row.status === "ended") return false;
+      if (row.status === "active" || row.status === "ringing") return true;
+      var exp = asMillis(row.expiresAt);
+      return !exp || exp > Date.now();
+    }
+    var row = key && book[key];
+    if (usable(row)) return row.code;
+    if (raw === "guest" || !key) {
+      var best = null;
+      Object.keys(book).forEach(function (phoneKey) {
+        var item = book[phoneKey];
+        if (!usable(item)) return;
+        if (!best || asMillis(item.expiresAt) > asMillis(best.expiresAt)) best = item;
+      });
+      if (best) return best.code;
+    }
     return "";
   };
 
@@ -723,9 +748,14 @@
         }
         var ref = fs.doc(db, "guestLinks", code);
         window.__vcomGuestEndVisit = function () { endVisit(fs, ref); };
+        var markedReady = false;
         fs.onSnapshot(ref, function (snap) {
           var data = snap.exists() ? snap.data() || {} : null;
           window.__vcomGuestData = data;
+          if (data && data.status === "waiting" && !markedReady && fs.updateDoc) {
+            markedReady = true;
+            fs.updateDoc(ref, { guestReady: Date.now() }).catch(function () {});
+          }
           if (session && data && data.status === "ended") {
             session.close();
             if (window.vcomReleaseCapture) window.vcomReleaseCapture();
@@ -1001,10 +1031,11 @@
         return window.__vcomGuestBook[phone];
       }).filter(function (row) {
         if (!row) return false;
-        if (row.status === "active") return true;
+        if (row.status === "active" || row.status === "ringing") return true;
         if (row.status === "ended") return false;
-        return row.expiresAt > now;
-      }).sort(function (a, b) { return b.expiresAt - a.expiresAt; });
+        var exp = asMillis(row.expiresAt);
+        return !exp || exp > now;
+      }).sort(function (a, b) { return asMillis(b.expiresAt) - asMillis(a.expiresAt); });
     }
     function currentRow() {
       var rows = visibleRows();
@@ -1037,6 +1068,13 @@
         copyLink.textContent = "הועתק";
         setTimeout(function () { if (copyLink.isConnected) copyLink.textContent = "העתק קישור שיחה"; }, 1500);
       });
+      var callLink = document.createElement("button");
+      callLink.type = "button";
+      callLink.className = "vcom-link-copy";
+      callLink.textContent = "חייג";
+      callLink.addEventListener("click", function () {
+        startOwnerGuestCall(row.code);
+      });
       var lastTap = 0;
       function copyPhone() {
         clip(digits(row.phone));
@@ -1056,8 +1094,18 @@
       card.appendChild(name);
       card.appendChild(phone);
       card.appendChild(meta);
+      card.appendChild(callLink);
       card.appendChild(copyLink);
       banner.appendChild(card);
+    }
+    function startOwnerGuestCall(code) {
+      if (!code || window.__vcomGuestActive === code) return;
+      if (isOnCall()) return;
+      keepFirestoreLive();
+      try {
+        if (window.vcomStartGuestCall) window.vcomStartGuestCall(code, false);
+      } catch (e) {}
+      try { applyDrawer(0); } catch (e2) {}
     }
     function watch(code) {
       var fs = fsNow();
@@ -1075,11 +1123,22 @@
         if (!data) row.status = "ended";
         else {
           row.status = data.status || row.status;
-          row.expiresAt = data.expiresAt || row.expiresAt;
+          row.expiresAt = asMillis(data.expiresAt) || row.expiresAt;
           row.fromLink = true;
+          if (data.guestReady && (row.status === "waiting" || !row.status)) {
+            window.__vcomAutoStarted = window.__vcomAutoStarted || {};
+            if (!window.__vcomAutoStarted[code]) {
+              window.__vcomAutoStarted[code] = 1;
+              startOwnerGuestCall(code);
+            }
+          }
         }
         render();
-      }, function () {});
+      }, function () {
+        try { if (typeof watched[code] === "function") watched[code](); } catch (e) {}
+        delete watched[code];
+        setTimeout(function () { watch(code); }, 1200);
+      });
     }
     function forget(row) {
       var fs = fsNow();
@@ -1105,7 +1164,8 @@
       var max = 0;
       Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
         var row = window.__vcomGuestBook[phone];
-        if (row && row.expiresAt > max) max = row.expiresAt;
+        var exp = row ? asMillis(row.expiresAt) : 0;
+        if (exp > max) max = exp;
       });
       return max;
     }
@@ -1226,8 +1286,10 @@
             expiresAt: data.expiresAt,
             status: "waiting",
             url: shareUrl(code),
-            local: true
+            local: true,
+            fromLink: true
           };
+          keepFirestoreLive();
           watch(code);
         });
       });
@@ -1274,17 +1336,15 @@
       } else menu.style.transform = "";
     }
     window.__vcomDrawerMove = applyDrawer;
-    function frame() {
-      applyDrawer(window.__vcomDrawerX);
-      requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
+    applyDrawer(window.__vcomDrawerX || 0);
+    window.addEventListener("resize", function () { applyDrawer(window.__vcomDrawerX || 0); });
     function tick() {
       var now = Date.now();
       Object.keys(window.__vcomGuestBook).forEach(function (phone) {
         var row = window.__vcomGuestBook[phone];
-        if (!row || row.status === "active") return;
-        if (row.expiresAt > now) return;
+        if (!row || row.status === "active" || row.status === "ringing") return;
+        var exp = asMillis(row.expiresAt);
+        if (!exp || exp > now) return;
         forget(row);
       });
       var row = currentRow();
@@ -1294,20 +1354,26 @@
       } else if (!meta) render();
       else meta.textContent = row.status === "active" ? "בשיחה" : untilClock(row.expiresAt);
     }
-    setInterval(tick, 1000);
+    setInterval(tick, 2000);
+    var userUnsub = null;
+    var authBound = false;
     function bindUser() {
       var fs = fsNow();
       var auth = window.firebase_auth;
       if (!fs || !auth || !auth.getAuth || !auth.onAuthStateChanged || !fs.onSnapshot) return false;
+      if (authBound) return true;
+      authBound = true;
       auth.onAuthStateChanged(auth.getAuth(), function (user) {
         window.__vcomUid = user ? user.uid : "";
+        if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
         if (!user) {
           window.__vcomGuestBook = {};
           window.__vcomProfile = {};
           render();
           return;
         }
-        fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
+        keepFirestoreLive();
+        userUnsub = fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
           var data = snap.exists() ? snap.data() || {} : {};
           window.__vcomProfile = {
             name: data.name || data.displayName || "",
@@ -1323,7 +1389,7 @@
               code: code,
               name: row.name || (prev && prev.name) || "",
               phone: phone,
-              expiresAt: prev && prev.fromLink ? prev.expiresAt : (row.expiresAt || (prev && prev.expiresAt) || 0),
+              expiresAt: prev && prev.fromLink ? prev.expiresAt : (asMillis(row.expiresAt) || (prev && prev.expiresAt) || 0),
               status: prev && prev.fromLink ? prev.status : (row.status || "waiting"),
               url: shareUrl(code),
               fromLink: !!(prev && prev.fromLink)
@@ -1341,6 +1407,13 @@
       tries += 1;
       if (bindUser() || tries > 80) clearInterval(timer);
     }, 400);
+    setInterval(function () {
+      keepFirestoreLive();
+      Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+        var row = window.__vcomGuestBook[phone];
+        if (row && row.code) watch(row.code);
+      });
+    }, 15000);
 
     window.vcomStartGuestCall = function (code, video) {
       window.__vcomGuestStarted = code;
