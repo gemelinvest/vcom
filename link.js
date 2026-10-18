@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "ring1";
+  window.__VCOM_LINK_BUILD = "fix1";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -44,13 +44,6 @@
     if (typeof value.seconds === "number") return value.seconds * 1000;
     var n = Number(value);
     return isFinite(n) ? n : 0;
-  }
-  function keepFirestoreLive() {
-    if (guestCode) return;
-    if (document.visibilityState === "hidden") return;
-    var fs = window.firebase_firestore;
-    if (!fs || !fs.enableNetwork || !fs.getFirestore) return;
-    try { fs.enableNetwork(fs.getFirestore()).catch(function () {}); } catch (e) {}
   }
   function pretty(phone) {
     var d = digits(phone);
@@ -604,17 +597,9 @@
       var exp = asMillis(row.expiresAt);
       return !exp || exp > Date.now();
     }
-    var row = key && book[key];
+    if (!key) return "";
+    var row = book[key];
     if (usable(row)) return row.code;
-    if (raw === "guest" || !key) {
-      var best = null;
-      Object.keys(book).forEach(function (phoneKey) {
-        var item = book[phoneKey];
-        if (!usable(item)) return;
-        if (!best || asMillis(item.expiresAt) > asMillis(best.expiresAt)) best = item;
-      });
-      if (best) return best.code;
-    }
     return "";
   };
 
@@ -752,9 +737,9 @@
         fs.onSnapshot(ref, function (snap) {
           var data = snap.exists() ? snap.data() || {} : null;
           window.__vcomGuestData = data;
-          if (data && data.status === "waiting" && !markedReady && fs.updateDoc) {
+          if (data && data.status === "waiting" && !data.offer && !markedReady && fs.updateDoc) {
             markedReady = true;
-            fs.updateDoc(ref, { guestReady: Date.now() }).catch(function () {});
+            fs.updateDoc(ref, { status: "ringing" }).catch(function () {});
           }
           if (session && data && data.status === "ended") {
             session.close();
@@ -954,7 +939,7 @@
     var menu = document.createElement("div");
     menu.id = "vcom-link-menu";
     menu.hidden = true;
-    menu.innerHTML = '<button id="vcom-link-open" type="button">קבל לינק לשיחה</button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">קבל לינק חדש</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
     document.body.appendChild(menu);
     var logo = document.createElement("img");
     logo.id = "vcom-menu-logo";
@@ -1101,7 +1086,7 @@
     function startOwnerGuestCall(code) {
       if (!code || window.__vcomGuestActive === code) return;
       if (isOnCall()) return;
-      keepFirestoreLive();
+      try { if (window.__vcomBloc && window.__vcomBloc.fy) return; } catch (e0) {}
       try {
         if (window.vcomStartGuestCall) window.vcomStartGuestCall(code, false);
       } catch (e) {}
@@ -1111,6 +1096,7 @@
       var fs = fsNow();
       if (!fs || watched[code] || !fs.onSnapshot) return;
       watched[code] = fs.onSnapshot(fs.doc(fs.getFirestore(), "guestLinks", code), function (snap) {
+        window.__vcomWatchFails = 0;
         var data = snap.exists() ? snap.data() || {} : null;
         var phone = digits(data && data.tempPhone);
         var row = phone && window.__vcomGuestBook[phone];
@@ -1122,10 +1108,11 @@
         if (!row) return;
         if (!data) row.status = "ended";
         else {
+          var waiting = row.status === "waiting" || row.status === "ringing" || !row.status;
           row.status = data.status || row.status;
           row.expiresAt = asMillis(data.expiresAt) || row.expiresAt;
           row.fromLink = true;
-          if (data.guestReady && (row.status === "waiting" || !row.status)) {
+          if (waiting && !data.offer && (data.status === "ringing" || data.guestReady)) {
             window.__vcomAutoStarted = window.__vcomAutoStarted || {};
             if (!window.__vcomAutoStarted[code]) {
               window.__vcomAutoStarted[code] = 1;
@@ -1137,7 +1124,8 @@
       }, function () {
         try { if (typeof watched[code] === "function") watched[code](); } catch (e) {}
         delete watched[code];
-        setTimeout(function () { watch(code); }, 1200);
+        var delay = Math.min(15000, 2000 * Math.pow(2, window.__vcomWatchFails = (window.__vcomWatchFails || 0) + 1));
+        setTimeout(function () { watch(code); }, delay);
       });
     }
     function forget(row) {
@@ -1289,7 +1277,6 @@
             local: true,
             fromLink: true
           };
-          keepFirestoreLive();
           watch(code);
         });
       });
@@ -1372,7 +1359,6 @@
           render();
           return;
         }
-        keepFirestoreLive();
         userUnsub = fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
           var data = snap.exists() ? snap.data() || {} : {};
           window.__vcomProfile = {
@@ -1380,10 +1366,12 @@
             phone: data.phoneNumber || ""
           };
           var links = data.guestLinks || {};
+          var livePhones = {};
           Object.keys(links).forEach(function (code) {
             var row = links[code] || {};
             var phone = digits(row.phone);
             if (!phone) return;
+            livePhones[phone] = 1;
             var prev = window.__vcomGuestBook[phone];
             window.__vcomGuestBook[phone] = {
               code: code,
@@ -1395,6 +1383,15 @@
               fromLink: !!(prev && prev.fromLink)
             };
             watch(code);
+          });
+          Object.keys(window.__vcomGuestBook).forEach(function (phone) {
+            if (livePhones[phone] || window.__vcomGuestBook[phone].local) return;
+            var stale = window.__vcomGuestBook[phone];
+            delete window.__vcomGuestBook[phone];
+            if (stale && stale.code && watched[stale.code]) {
+              try { watched[stale.code](); } catch (eUn) {}
+              delete watched[stale.code];
+            }
           });
           render();
           if (busy && newestExpiry() > (window.__vcomIssueSeen || 0)) finishIssue(window.__vcomIssueGen);
@@ -1408,10 +1405,9 @@
       if (bindUser() || tries > 80) clearInterval(timer);
     }, 400);
     setInterval(function () {
-      keepFirestoreLive();
       Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
         var row = window.__vcomGuestBook[phone];
-        if (row && row.code) watch(row.code);
+        if (row && row.code && !watched[row.code]) watch(row.code);
       });
     }, 15000);
 
@@ -1601,7 +1597,10 @@
       + "#vcom-link-menu[hidden],#vcom-link-form[hidden],#vcom-link-banner[hidden],#vcom-dial-paste[hidden],#vcom-menu-logo[hidden]{display:none!important}"
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
-      + "#vcom-link-open{display:block;width:100%;box-sizing:border-box;margin:0;padding:14px 16px;border:0;border-radius:16px;background:#F2F2F7;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#8E8E93;text-align:right;font:400 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#8E8E93}"
+      + ".vcom-link-open-icon svg{display:block}"
+      + ".vcom-link-open-text{font-weight:400}"
       + "#vcom-link-form{display:flex;flex-direction:column;gap:8px;margin:0}"
       + "#vcom-link-name{width:100%;box-sizing:border-box;border:1px solid #E5E5EA;border-radius:12px;background:#fff;color:#1C1C1E;padding:12px 14px;font:16px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-error{min-height:18px;margin:0;color:#C62828;font-size:13px;text-align:right}"
