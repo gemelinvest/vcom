@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "ear2";
+  window.__VCOM_LINK_BUILD = "ear3";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -632,38 +632,20 @@
   window.vcomCallAudioRoute = function (speakerOn) {
     return speakerOn ? "speaker" : "earpiece";
   };
-  window.vcomBuildRingbackWav = function () {
-    var sampleRate = 8000;
-    var duration = 1;
-    var n = sampleRate * duration;
-    var dataSize = n * 2;
-    var bytes = new Uint8Array(44 + dataSize);
-    var view = new DataView(bytes.buffer);
-    function ascii(offset, text) {
-      for (var i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i);
-    }
-    ascii(0, "RIFF");
-    view.setUint32(4, 36 + dataSize, true);
-    ascii(8, "WAVE");
-    ascii(12, "fmt ");
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    ascii(36, "data");
-    view.setUint32(40, dataSize, true);
-    for (var i = 0; i < n; i++) {
-      var t = i / sampleRate;
-      var env = t < 0.02 ? t / 0.02 : (t > 0.98 ? (1 - t) / 0.02 : 1);
-      var sample = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.16 * env;
-      if (sample > 1) sample = 1;
-      if (sample < -1) sample = -1;
-      view.setInt16(44 + i * 2, sample * 32767, true);
-    }
-    return bytes;
+  window.vcomPickAudioSink = function (devices, speakerOn) {
+    var speaker = "";
+    var ear = "";
+    var comm = "";
+    (devices || []).forEach(function (device) {
+      if (!device || device.kind !== "audiooutput") return;
+      var id = String(device.deviceId || "");
+      var label = String(device.label || "").toLowerCase();
+      if (id === "communications" || /communication/.test(label)) comm = id;
+      if (/speaker|loud/.test(label)) speaker = id;
+      if (/earpiece|receiver|handset|telephony/.test(label) && !/speaker|loud/.test(label)) ear = id;
+    });
+    if (speakerOn) return speaker || "default";
+    return ear || comm || "communications";
   };
   window.vcomApplyCallAudioRoute = function (el) {
     var speaker = !!window.__vcomSpeaker;
@@ -672,14 +654,19 @@
     try {
       if (navigator.audioSession) navigator.audioSession.type = speaker ? "auto" : "play-and-record";
     } catch (eSess) {}
-    var sink = speaker ? "default" : "communications";
-    window.__vcomRingbackSink = sink;
-    if (el) {
-      el.volume = speaker ? 1 : 0.45;
-      if (typeof el.setSinkId === "function") {
-        var pending = el.setSinkId(sink);
+    if (el) el.volume = 1;
+    function applySink(id) {
+      window.__vcomRingbackSink = id;
+      if (el && typeof el.setSinkId === "function" && id) {
+        var pending = el.setSinkId(id);
         if (pending && pending.catch) pending.catch(function () {});
       }
+    }
+    applySink(speaker ? "default" : "communications");
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then(function (devices) {
+        applySink(window.vcomPickAudioSink(devices, speaker));
+      }).catch(function () {});
     }
     if (window.vcomRouteOutputs) window.vcomRouteOutputs();
     return route;
@@ -696,11 +683,40 @@
     (document.documentElement || document.body).appendChild(el);
     return el;
   }
-  function ringbackUrl() {
-    if (window.__vcomRingbackUrl) return window.__vcomRingbackUrl;
-    if (typeof Blob === "undefined" || typeof URL === "undefined" || !URL.createObjectURL) return "";
-    window.__vcomRingbackUrl = URL.createObjectURL(new Blob([window.vcomBuildRingbackWav()], { type: "audio/wav" }));
-    return window.__vcomRingbackUrl;
+  function closeRingbackGraph() {
+    (window.__vcomRingbackNodes || []).forEach(function (node) {
+      try { if (node.stop) node.stop(); } catch (eStop) {}
+      try { if (node.disconnect) node.disconnect(); } catch (eDisc) {}
+    });
+    window.__vcomRingbackNodes = [];
+  }
+  function ensureRingbackStream(el) {
+    if (el && el.srcObject && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream) {
+      return window.__vcomRingbackDest;
+    }
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx || !el) return null;
+    try { if (navigator.audioSession) navigator.audioSession.type = window.__vcomSpeaker ? "auto" : "play-and-record"; } catch (eSess) {}
+    if (window.__vcomToneCtx && window.__vcomToneCtx.close) {
+      try { window.__vcomToneCtx.close(); } catch (eOld) {}
+      window.__vcomToneCtx = null;
+    }
+    if (window.__vcomRingbackCtx && window.__vcomRingbackCtx.close) {
+      try { window.__vcomRingbackCtx.close(); } catch (eCtx) {}
+    }
+    var ctx = new Ctx();
+    window.__vcomRingbackCtx = ctx;
+    if (ctx.resume) {
+      try { ctx.resume(); } catch (eRes) {}
+    }
+    if (typeof ctx.createMediaStreamDestination !== "function") return null;
+    var dest = ctx.createMediaStreamDestination();
+    window.__vcomRingbackDest = dest;
+    try { el.removeAttribute("src"); el.src = ""; } catch (eSrc) {}
+    el.srcObject = dest.stream;
+    el.__vcomRingbackStream = dest.stream;
+    window.__vcomRingbackKind = "mediastream";
+    return dest;
   }
   window.vcomStartRingback = function () {
     if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
@@ -710,16 +726,32 @@
     }
     window.__vcomRingbackOn = true;
     var el = ringbackEl();
-    if (el && el.srcObject) return;
+    if (el && el.srcObject && !el.__vcomRingbackStream) return;
+    var dest = ensureRingbackStream(el);
     window.vcomApplyCallAudioRoute(el);
-    var url = ringbackUrl();
+    var play = el && el.play && el.play();
+    if (play && play.catch) play.catch(function () {});
     function beep() {
-      if (!window.__vcomRingbackOn || !el || el.srcObject) return;
+      if (!window.__vcomRingbackOn) return;
+      var ctx = window.__vcomRingbackCtx;
+      dest = window.__vcomRingbackDest || dest;
+      if (!ctx || !dest) return;
+      closeRingbackGraph();
       window.vcomApplyCallAudioRoute(el);
-      if (url && el.getAttribute("src") !== url) el.src = url;
-      try { el.currentTime = 0; } catch (eT) {}
-      var play = el.play && el.play();
-      if (play && play.catch) play.catch(function () {});
+      var gain = ctx.createGain();
+      gain.gain.value = 0.22;
+      gain.connect(dest);
+      var now = ctx.currentTime;
+      [440, 480].forEach(function (freq) {
+        var osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        osc.start(now);
+        osc.stop(now + 1);
+        window.__vcomRingbackNodes.push(osc);
+      });
+      window.__vcomRingbackNodes.push(gain);
     }
     if (window.__vcomRingbackTimer) clearInterval(window.__vcomRingbackTimer);
     beep();
@@ -732,10 +764,17 @@
       clearInterval(window.__vcomRingbackTimer);
       window.__vcomRingbackTimer = null;
     }
+    closeRingbackGraph();
     var el = document.getElementById("vcom-guest-caller") || document.getElementById("vcom-ringback");
-    if (el && !el.srcObject) {
+    if (el && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream) {
       try { el.pause(); } catch (eP) {}
-      try { el.removeAttribute("src"); el.src = ""; } catch (eS) {}
+      el.srcObject = null;
+      el.__vcomRingbackStream = null;
+    }
+    if (window.__vcomRingbackCtx && window.__vcomRingbackCtx.close) {
+      try { window.__vcomRingbackCtx.close(); } catch (eClose) {}
+      window.__vcomRingbackCtx = null;
+      window.__vcomRingbackDest = null;
     }
   };
   window.vcomRouteRingback = function () {
@@ -1061,6 +1100,8 @@
     pc.ontrack = function (event) {
       var stream = event.streams[0];
       remote.srcObject = stream;
+      if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
+      window.vcomApplyCallAudioRoute(remote);
       var play = remote.play();
       if (play && play.catch) play.catch(function () {});
       showGuestVideo(nodes.remoteVideo, stream);

@@ -137,28 +137,49 @@ test("outgoing ringback waits for the local mic before playing", function () {
   assert.match(src, /current\.local = stream;[\s\S]{0,500}startBack\(\)/);
 });
 
-test("ringback is a call-route WAV, not a Web Audio speaker tone", function () {
-  const w = loadLink();
-  const wav = w.vcomBuildRingbackWav();
-  assert.ok(wav && wav.byteLength > 44);
-  assert.equal(String.fromCharCode(wav[0], wav[1], wav[2], wav[3]), "RIFF");
+test("wait-tone uses a voice MediaStream, not a file played on the loudspeaker", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  const impl = src.match(/window\.vcomStartRingback = function[\s\S]*?\n  \};/);
+  assert.match(src, /window\.vcomStartRingback = function/);
+  assert.match(src, /function ensureRingbackStream[\s\S]{0,900}createMediaStreamDestination/);
+  assert.match(src, /el\.srcObject = dest\.stream/);
+  const impl = src.match(/window\.vcomStartRingback = function[\s\S]*?window\.vcomStopRingback/);
   assert.ok(impl, "vcomStartRingback is defined in link.js");
-  assert.equal(impl[0].includes("createOscillator"), false);
   assert.equal(impl[0].includes("ctx.destination"), false);
-  assert.match(src, /function ringbackEl\([\s\S]{0,400}vcom-guest-caller/);
+  assert.equal(impl[0].includes("audio/wav"), false);
+  assert.equal(impl[0].includes("el.src = url"), false);
+  assert.match(impl[0], /play-and-record/);
 });
 
-test("call audio route uses earpiece on iOS session and Android communications sink", function () {
+test("earpiece is a route change, not a quieter speaker", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.doesNotMatch(src, /el\.volume = speaker \? 1 : 0\.45/);
   const w = loadLink();
+  const el = { volume: 0, setSinkId: function (id) { this.sink = id; return Promise.resolve(); } };
   w.__vcomSpeaker = false;
-  const ear = w.vcomApplyCallAudioRoute({ volume: 1, setSinkId: function (id) { this.sink = id; return Promise.resolve(); } });
-  assert.equal(ear, "earpiece");
+  assert.equal(w.vcomApplyCallAudioRoute(el), "earpiece");
+  assert.equal(el.volume, 1);
   assert.equal(w.__vcomRingbackSink, "communications");
   w.__vcomSpeaker = true;
-  const spk = w.vcomApplyCallAudioRoute({ volume: 1, setSinkId: function (id) { this.sink = id; return Promise.resolve(); } });
-  assert.equal(spk, "speaker");
+  assert.equal(w.vcomApplyCallAudioRoute(el), "speaker");
+  assert.equal(el.volume, 1);
+});
+
+test("Android earpiece sink prefers receiver, never default speaker", function () {
+  const w = loadLink();
+  assert.equal(w.vcomPickAudioSink([
+    { kind: "audiooutput", deviceId: "default", label: "Default" },
+    { kind: "audiooutput", deviceId: "sp", label: "Speaker" },
+    { kind: "audiooutput", deviceId: "ear", label: "Earpiece" }
+  ], false), "ear");
+  assert.equal(w.vcomPickAudioSink([
+    { kind: "audiooutput", deviceId: "default", label: "" },
+    { kind: "audiooutput", deviceId: "communications", label: "" }
+  ], false), "communications");
+  assert.equal(w.vcomPickAudioSink([
+    { kind: "audiooutput", deviceId: "sp", label: "Speaker" }
+  ], true), "sp");
+  assert.notEqual(w.vcomPickAudioSink([], false), "default");
+  assert.notEqual(w.vcomPickAudioSink([], false), "");
 });
 
 test("hangup from either side writes ended and closes both UIs", function () {
