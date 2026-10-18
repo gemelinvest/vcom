@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "end4";
+  window.__VCOM_LINK_BUILD = "end5";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -39,7 +39,7 @@
     if (d.length === 9) return d.slice(0, 3) + "-" + d.slice(3);
     return d || "";
   }
-  function shareUrl(code) { return location.origin + "/vcom/" + code; }
+  function shareUrl(code) { return "https://vcom.web.app/vcom/" + code; }
   function clip(text) {
     var value = String(text || "");
     window.__vcomCopied = value;
@@ -206,9 +206,38 @@
   }
   function appHomeUrl() {
     try {
-      if (/\.web\.app$/.test(location.hostname) || /firebaseapp\.com$/.test(location.hostname)) return "/";
+      if (/\.web\.app$/.test(location.hostname) || /firebaseapp\.com$/.test(location.hostname)) return "/?signup=1";
     } catch (e) {}
-    return "./";
+    return "./?signup=1";
+  }
+  function accountEmailFromName(name) {
+    try {
+      if (typeof window.vcomAccountEmail === "function") {
+        var mapped = window.vcomAccountEmail(name);
+        if (mapped) return mapped;
+      }
+    } catch (e) {}
+    var value = String(name || "").replace(/^\s+|\s+$/g, "").replace(/\s+/g, " ");
+    if (!value) return "";
+    if (value.indexOf("@") >= 0) return value.toLowerCase();
+    value = value.toLowerCase();
+    var h1 = 0x811c9dc5, h2 = 0x01000193, h3 = 0x811c9dc5, h4 = 0x9e3779b9;
+    for (var i = 0; i < value.length; i++) {
+      var c = value.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 0x01000193);
+      h2 = Math.imul(h2 ^ (c >>> 8), 0x01000193);
+      h3 = Math.imul(h3 + c, 0x85ebca6b);
+      h4 = Math.imul(h4 ^ c, 0xc2b2ae35);
+    }
+    function hex32(n) { return ("00000000" + (n >>> 0).toString(16)).slice(-8); }
+    return "n" + hex32(h1) + hex32(h2) + hex32(h3) + hex32(h4) + "@voip-call-app-7d0c3.web.app";
+  }
+  function tempSignupPhone() {
+    for (var i = 0; i < 10; i++) {
+      var n = "020" + String(100000 + Math.floor(Math.random() * 900000));
+      if (/^020\d{6}$/.test(n)) return n;
+    }
+    return "020" + String(Date.now()).slice(-6);
   }
   function wireMediaPersist() {
     var devices = navigator.mediaDevices;
@@ -433,15 +462,120 @@
       document.head.appendChild(skin);
     }
   }
+  function wantsSignup() {
+    try { return new URLSearchParams(location.search).get("signup") === "1"; } catch (e) { return false; }
+  }
+  function wireSignupLanding() {
+    if (guestCode || !wantsSignup()) return;
+    if (document.getElementById("vcom-signup")) return;
+    try {
+      var authNow = window.firebase_auth;
+      if (authNow && authNow.getAuth && authNow.getAuth().currentUser) return;
+    } catch (e) {}
+    var wrap = document.createElement("section");
+    wrap.id = "vcom-signup";
+    wrap.innerHTML = ""
+      + '<div class="vcom-signup-card">'
+      + '<img class="vcom-signup-logo" src="/icons/vcom-splash.png?v=call11" alt="">'
+      + '<h1 class="vcom-signup-brand" dir="ltr"><span class="v">V</span><span class="com">COM</span></h1>'
+      + "<h2>הרשמה</h2>"
+      + "<p>צור חשבון חדש לשיחות קול</p>"
+      + '<form id="vcom-signup-form">'
+      + '<input id="vcom-signup-name" type="text" autocomplete="name" placeholder="שם המנוי ב-VCOM" required>'
+      + '<input id="vcom-signup-pass" type="password" autocomplete="new-password" placeholder="סיסמה" required minlength="6">'
+      + '<input id="vcom-signup-pass2" type="password" autocomplete="new-password" placeholder="אימות סיסמה" required minlength="6">'
+      + '<p id="vcom-signup-error" hidden></p>'
+      + '<button type="submit">הירשם</button>'
+      + "</form></div>";
+    var skin = document.createElement("style");
+    skin.textContent = ""
+      + "#vcom-signup{position:fixed;inset:0;z-index:12000;background:#F2F2F7;display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E}"
+      + ".vcom-signup-card{width:min(420px,100%);text-align:center}"
+      + ".vcom-signup-logo{width:88px;height:88px;object-fit:contain}"
+      + ".vcom-signup-brand{margin:8px 0 0;font-size:34px;font-weight:700;letter-spacing:0}"
+      + ".vcom-signup-brand .v{color:#34C759}.vcom-signup-brand .com{color:#007AFF}"
+      + "#vcom-signup h2{margin:18px 0 6px;font-size:28px;font-weight:800}"
+      + "#vcom-signup p{margin:0 0 18px;color:#8E8E93}"
+      + "#vcom-signup form{display:flex;flex-direction:column;gap:10px}"
+      + "#vcom-signup input{border:0;background:#fff;border-radius:14px;padding:14px 16px;font:inherit;text-align:right;box-shadow:0 8px 24px rgba(28,39,61,.08)}"
+      + "#vcom-signup button{border:0;background:#007AFF;color:#fff;border-radius:14px;padding:14px;font:700 17px/1 inherit}"
+      + "#vcom-signup-error{color:#FF3B30;font-size:14px}";
+    document.head.appendChild(skin);
+    document.body.appendChild(wrap);
+    var form = document.getElementById("vcom-signup-form");
+    var err = document.getElementById("vcom-signup-error");
+    function fail(msg) {
+      err.hidden = false;
+      err.textContent = msg;
+    }
+    function writeProfile(uid, email, displayName) {
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.getFirestore || !fs.doc || !fs.setDoc || !uid) return Promise.resolve();
+      var db = fs.getFirestore();
+      var phone = tempSignupPhone();
+      var userDoc = {
+        email: email,
+        phoneNumber: phone,
+        createdAt: new Date(),
+        approved: false,
+        lineActive: false
+      };
+      if (displayName) userDoc.name = displayName;
+      return fs.setDoc(fs.doc(db, "users", uid), userDoc).then(function () {
+        if (!fs.doc(db, "phoneNumbers", phone)) return;
+        return fs.setDoc(fs.doc(db, "phoneNumbers", phone), { userId: uid });
+      }).catch(function () {});
+    }
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var rawName = (document.getElementById("vcom-signup-name").value || "").replace(/^\s+|\s+$/g, "").replace(/\s+/g, " ");
+      var pass = document.getElementById("vcom-signup-pass").value || "";
+      var pass2 = document.getElementById("vcom-signup-pass2").value || "";
+      err.hidden = true;
+      if (!rawName) return fail("נא למלא שם מנוי");
+      if (pass.length < 6) return fail("הסיסמה חייבת 6 תווים לפחות");
+      if (pass !== pass2) return fail("הסיסמאות אינן תואמות");
+      var email = accountEmailFromName(rawName);
+      if (!email) return fail("לא ניתן ליצור חשבון מהשם הזה");
+      try { window.__vcomSignupName = rawName.indexOf("@") >= 0 ? "" : rawName; } catch (e) {}
+      function createWith(auth) {
+        if (!auth || !auth.getAuth || !auth.createUserWithEmailAndPassword) return Promise.reject(new Error("no-auth"));
+        return auth.createUserWithEmailAndPassword(auth.getAuth(), email, pass);
+      }
+      var run = createWith(window.firebase_auth);
+      if (!window.firebase_auth || !window.firebase_auth.createUserWithEmailAndPassword) {
+        run = Promise.all([
+          import("https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js"),
+          import("https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js")
+        ]).then(function (mods) {
+          var app;
+          try { app = mods[0].getApp(); } catch (e2) { app = mods[0].initializeApp(firebaseConfig); }
+          return mods[1].createUserWithEmailAndPassword(mods[1].getAuth(app), email, pass);
+        });
+      }
+      run.then(function (cred) {
+        var uid = cred && cred.user && cred.user.uid;
+        return writeProfile(uid, email, rawName.indexOf("@") >= 0 ? "" : rawName).then(function () {
+          wrap.remove();
+        });
+      }).catch(function (e) {
+        var code = String((e && e.code) || "");
+        if (code.indexOf("email-already-in-use") >= 0) return fail("השם כבר רשום. התחברו.");
+        fail("לא ניתן להשלים הרשמה כרגע");
+      });
+    });
+  }
   function bootChrome() {
     wireMediaPersist();
     wireUpdateBar();
     wireApproval();
+    wireSignupLanding();
     var tries = 0;
     var timer = setInterval(function () {
       tries += 1;
       wireUpdateBar();
       wireApproval();
+      wireSignupLanding();
       if (tries > 40) clearInterval(timer);
     }, 400);
   }
@@ -1436,23 +1570,26 @@
       + ".guest-controls .tool.on{background:#007AFF;color:#fff}"
       + ".guest-dead{min-height:100dvh;display:flex;flex-direction:column;align-items:center;background:#F2F2F7;text-align:center;padding:calc(env(safe-area-inset-top,0px) + 36px) 22px calc(env(safe-area-inset-bottom,0px) + 28px)}"
       + ".guest-dead.after-call{justify-content:center}"
-      + ".guest-dead:not(.after-call){justify-content:flex-start;padding-top:18vh}"
+      + ".guest-dead:not(.after-call){justify-content:flex-start;padding-top:14vh}"
       + ".guest-dead .guest-logo{margin:0 0 18px;font-size:34px}"
       + ".guest-dead.after-call .guest-logo,.guest-dead.after-call .guest-expired{display:none!important}"
-      + ".guest-expired{margin:0 0 12px;color:#3A3A3C;font-size:18px;font-weight:600}"
-      + ".guest-join{appearance:none;-webkit-appearance:none;display:flex;flex-direction:row;direction:ltr;align-items:center;gap:10px;margin-top:22px;border:0;background:#fff;color:#3A3A3C;border-radius:16px;padding:8px 14px 8px 8px;font:600 14px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 24px rgba(28,39,61,.08);max-width:min(360px,100%);width:100%;text-align:right}"
-      + ".guest-dead:not(.after-call) .guest-join{margin-top:auto}"
-      + ".guest-join-handset{width:44px;height:44px;flex:0 0 44px;object-fit:contain;background:transparent;pointer-events:none}"
-      + ".guest-join-text{flex:1;direction:rtl;text-align:right}"
-      + ".guest-join .vcom-word{display:inline-block;margin:0 4px}"
-      + ".guest-join .v{color:#34C759;font-weight:700}"
-      + ".guest-join .com{color:#007AFF;font-weight:700}";
+      + ".guest-expired{margin:0 0 22px;color:#3A3A3C;font-size:20px;font-weight:700}"
+      + ".guest-join{appearance:none;-webkit-appearance:none;display:flex;flex-direction:column;align-items:center;gap:22px;margin-top:8px;border:0;background:transparent;color:#1C1C1E;padding:0;font:inherit;max-width:min(440px,100%);width:100%;text-align:center}"
+      + ".guest-dead:not(.after-call) .guest-join{margin-top:8px}"
+      + ".guest-join-title{margin:0;font-size:clamp(30px,8vw,44px);font-weight:800;line-height:1.28;letter-spacing:-.02em;direction:rtl;unicode-bidi:isolate}"
+      + ".guest-join-brand{white-space:nowrap;unicode-bidi:isolate}"
+      + ".guest-join-cta{display:flex;flex-direction:row;direction:ltr;align-items:center;gap:12px;background:#fff;border-radius:18px;padding:10px 18px 10px 10px;box-shadow:0 8px 24px rgba(28,39,61,.08)}"
+      + ".guest-join-sub{direction:rtl;font-size:clamp(17px,4.3vw,21px);font-weight:600;color:#3A3A3C}"
+      + ".guest-join-handset{width:56px;height:56px;flex:0 0 56px;object-fit:contain;background:transparent;pointer-events:none}"
+      + ".guest-join .vcom-word{display:inline-block;margin:0;unicode-bidi:isolate}"
+      + ".guest-join .v{color:#34C759;font-weight:800}"
+      + ".guest-join .com{color:#007AFF;font-weight:800}";
   }
   function guestHtml() {
     return ''
       + '<section class="guest-wait" data-view="wait"><img src="/icons/vcom-splash.png?v=call11" alt="VCOM"><h1>VCOM</h1><p>המתן לשיחה</p></section>'
       + '<section class="guest-call" data-view="call" hidden><div class="guest-stage" data-stage hidden><video data-remote autoplay playsinline></video><video data-local autoplay playsinline muted></video></div><header class="guest-logo" aria-label="VCOM"><span class="com">COM</span><span class="v">V</span></header><div class="guest-mid"><h2 data-name></h2><p data-status>שיחה נכנסת</p><p data-timer hidden>0:00</p></div>'
       + '<div class="guest-controls"><button type="button" class="tool" data-speaker hidden>רמקול</button><button type="button" class="answer" data-answer>ענה</button><button type="button" class="hang" data-decline>דחה</button><button type="button" class="hang" data-hang hidden>נתק</button><button type="button" class="tool" data-mute hidden>השתק</button></div></section>'
-      + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה פג תוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join><img class="guest-join-handset" src="/icons/vcom-splash.png?v=call11" alt=""><span class="guest-join-text" dir="rtl">מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</span></button></section>';
+      + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה פג תוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join><span class="guest-join-title" dir="rtl">עדיין אין לך <span class="guest-join-brand">מנוי&nbsp;<span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></span></span><span class="guest-join-cta"><img class="guest-join-handset" src="/icons/vcom-splash.png?v=call11" alt=""><span class="guest-join-sub" dir="rtl">לחץ כאן להגשת בקשה</span></span></button></section>';
   }
 })();
