@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "ear3";
+  window.__VCOM_LINK_BUILD = "ear4";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -690,8 +690,62 @@
     });
     window.__vcomRingbackNodes = [];
   }
+  function closeLoopback() {
+    (window.__vcomLoopPcs || []).forEach(function (pc) {
+      try { pc.close(); } catch (ePc) {}
+    });
+    window.__vcomLoopPcs = [];
+  }
+  function attachVoiceLoopback(localStream, el) {
+    closeLoopback();
+    if (!el || !localStream) return;
+    try { el.removeAttribute("src"); el.src = ""; } catch (eSrc) {}
+    if (typeof RTCPeerConnection !== "function") {
+      el.srcObject = localStream;
+      el.__vcomRingbackStream = localStream;
+      window.__vcomRingbackKind = "mediastream";
+      return;
+    }
+    var outgoing = new RTCPeerConnection({ iceServers: [] });
+    var incoming = new RTCPeerConnection({ iceServers: [] });
+    window.__vcomLoopPcs = [outgoing, incoming];
+    (localStream.getAudioTracks ? localStream.getAudioTracks() : []).forEach(function (track) {
+      outgoing.addTrack(track, localStream);
+    });
+    incoming.ontrack = function (event) {
+      var remote = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
+      el.srcObject = remote;
+      el.__vcomRingbackStream = remote;
+      window.__vcomRingbackKind = "webrtc";
+      window.vcomApplyCallAudioRoute(el);
+      var play = el.play && el.play();
+      if (play && play.catch) play.catch(function () {});
+    };
+    function trickle(from, to) {
+      from.onicecandidate = function (event) {
+        if (event.candidate) to.addIceCandidate(event.candidate).catch(function () {});
+      };
+    }
+    trickle(outgoing, incoming);
+    trickle(incoming, outgoing);
+    outgoing.createOffer().then(function (offer) {
+      return outgoing.setLocalDescription(offer);
+    }).then(function () {
+      return incoming.setRemoteDescription(outgoing.localDescription);
+    }).then(function () {
+      return incoming.createAnswer();
+    }).then(function (answer) {
+      return incoming.setLocalDescription(answer);
+    }).then(function () {
+      return outgoing.setRemoteDescription(incoming.localDescription);
+    }).catch(function () {
+      el.srcObject = localStream;
+      el.__vcomRingbackStream = localStream;
+      window.__vcomRingbackKind = "mediastream";
+    });
+  }
   function ensureRingbackStream(el) {
-    if (el && el.srcObject && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream) {
+    if (el && el.srcObject && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream && window.__vcomRingbackDest) {
       return window.__vcomRingbackDest;
     }
     var Ctx = window.AudioContext || window.webkitAudioContext;
@@ -704,6 +758,7 @@
     if (window.__vcomRingbackCtx && window.__vcomRingbackCtx.close) {
       try { window.__vcomRingbackCtx.close(); } catch (eCtx) {}
     }
+    closeLoopback();
     var ctx = new Ctx();
     window.__vcomRingbackCtx = ctx;
     if (ctx.resume) {
@@ -712,13 +767,10 @@
     if (typeof ctx.createMediaStreamDestination !== "function") return null;
     var dest = ctx.createMediaStreamDestination();
     window.__vcomRingbackDest = dest;
-    try { el.removeAttribute("src"); el.src = ""; } catch (eSrc) {}
-    el.srcObject = dest.stream;
-    el.__vcomRingbackStream = dest.stream;
-    window.__vcomRingbackKind = "mediastream";
+    attachVoiceLoopback(dest.stream, el);
     return dest;
   }
-  window.vcomStartRingback = function () {
+  function startVoiceRingback() {
     if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
     else if (!window.__vcomSpeakerTouched) {
       window.__vcomSpeaker = false;
@@ -757,7 +809,9 @@
     beep();
     window.__vcomRingbackTimer = setInterval(beep, 4000);
     window.__vcomRingbackPlays = (window.__vcomRingbackPlays || 0) + 1;
-  };
+  }
+  window.vcomStartRingback = startVoiceRingback;
+  window.__vcomVoiceRingback = startVoiceRingback;
   window.vcomStopRingback = function () {
     window.__vcomRingbackOn = false;
     if (window.__vcomRingbackTimer) {
@@ -765,6 +819,7 @@
       window.__vcomRingbackTimer = null;
     }
     closeRingbackGraph();
+    closeLoopback();
     var el = document.getElementById("vcom-guest-caller") || document.getElementById("vcom-ringback");
     if (el && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream) {
       try { el.pause(); } catch (eP) {}
@@ -1823,7 +1878,6 @@
       }
       current.local = stream;
       if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
-      startBack();
       var localVideo = document.getElementById("vcom-guest-local-video");
       if (localVideo && stream.getVideoTracks && stream.getVideoTracks().length) {
         localVideo.srcObject = stream;
@@ -1833,6 +1887,7 @@
         if (showLocal && showLocal.catch) showLocal.catch(function () {});
       }
       stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
+      startBack();
       return pc.createOffer();
     }).then(function (offer) {
       if (!offer || current.closed || token !== window.__vcomGuestToken) return null;

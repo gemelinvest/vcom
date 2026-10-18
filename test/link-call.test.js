@@ -134,19 +134,19 @@ test("outgoing ringback waits for the local mic before playing", function () {
   const start = src.match(/function startCaller\([\s\S]*?mediaPromise\.then/);
   assert.ok(start, "startCaller exists");
   assert.equal(start[0].includes("startBack()"), false, "must not ring before getUserMedia");
-  assert.match(src, /current\.local = stream;[\s\S]{0,500}startBack\(\)/);
+  assert.match(src, /pc\.addTrack\(track, stream\);[\s\S]{0,80}startBack\(\)/);
 });
 
-test("wait-tone uses a voice MediaStream, not a file played on the loudspeaker", function () {
+test("wait-tone uses a WebRTC voice loopback, not a loudspeaker media file", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.match(src, /window\.vcomStartRingback = function/);
-  assert.match(src, /function ensureRingbackStream[\s\S]{0,900}createMediaStreamDestination/);
-  assert.match(src, /el\.srcObject = dest\.stream/);
-  const impl = src.match(/window\.vcomStartRingback = function[\s\S]*?window\.vcomStopRingback/);
-  assert.ok(impl, "vcomStartRingback is defined in link.js");
+  assert.match(src, /window\.vcomStartRingback = startVoiceRingback/);
+  assert.match(src, /function attachVoiceLoopback[\s\S]{0,500}RTCPeerConnection/);
+  assert.match(src, /createMediaStreamDestination/);
+  assert.equal(src.includes("el.srcObject = dest.stream"), false);
+  const impl = src.match(/function startVoiceRingback\([\s\S]*?window\.vcomStartRingback = startVoiceRingback/);
+  assert.ok(impl, "voice ringback is defined in link.js");
   assert.equal(impl[0].includes("ctx.destination"), false);
   assert.equal(impl[0].includes("audio/wav"), false);
-  assert.equal(impl[0].includes("el.src = url"), false);
   assert.match(impl[0], /play-and-record/);
 });
 
