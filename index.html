@@ -206,7 +206,27 @@
   <audio id="remote-audio" autoplay playsinline></audio>
   <div id="toast" class="toast" hidden></div>
 
+  <div id="vcom-update" hidden>
+    <span>קיימת גרסה חדשה לאפליקציה</span>
+    <button id="vcom-update-go" type="button">עדכון</button>
+  </div>
+
+  <section id="screen-pending" class="screen pending-screen" hidden>
+    <div class="vcom-approval-card">
+      <img class="brand-badge" src="./icons/vcom-blue-192.png" width="84" height="84" alt=""/>
+      <h2>הבקשה נשלחה בהצלחה</h2>
+      <p>אנו נעדכן כאן שהמנוי שלך אושר.<br>בברכה, צוות <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></p>
+      <button type="button" class="text-link" id="pending-logout">התנתק</button>
+    </div>
+  </section>
+
+  <section id="demo-guest-dead" class="guest-dead-demo" hidden>
+    <header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header>
+    <p class="guest-expired" id="demo-expired">לינק שיחה לא בתוקף</p>
+    <button type="button" class="guest-join" id="demo-join">מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</button>
+  </section>
+
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="./app.js?v=mic1"></script>
+  <script src="./app.js?v=mic2"></script>
 </body>
 </html>

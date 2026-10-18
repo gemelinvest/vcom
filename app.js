@@ -4,6 +4,8 @@
   var USERS_KEY = "vcom.users.v1";
   var SESSION_KEY = "vcom.session.v1";
   var RECENTS_KEY = "vcom.recents.v1";
+  var MEDIA_KEY = "vcom.media.granted.v1";
+  var REVISION_KEY = "vcom_revision";
 
   var DEMO_CONTACTS = [
     { name: "דמו VCOM", subtitle: "שיחת הדגמה במכשיר", peer: "demo", kind: "sim" },
@@ -83,7 +85,7 @@
 
   function go(screen) {
     state.screen = screen;
-    ["welcome", "register", "login", "app"].forEach(function (name) {
+    ["welcome", "register", "login", "app", "pending"].forEach(function (name) {
       show($("screen-" + name), name === screen);
     });
     if (screen === "app") renderApp();
@@ -144,14 +146,13 @@
           name: displayName(email),
           passHash: passHash,
           code: formatCode(emailHash),
-          peerId: peerIdFromHex(emailHash)
+          peerId: peerIdFromHex(emailHash),
+          pending: true
         };
         users.push(user);
         saveJson(USERS_KEY, users);
         setSession(user);
-        go("app");
-        connectPeer();
-        toast("נרשמתם בהצלחה");
+        go("pending");
       });
     });
   });
@@ -167,8 +168,11 @@
     sha256(pass).then(function (hash) {
       if (hash !== user.passHash) return setError("login-error", "סיסמה שגויה");
       setSession(user);
-      go("app");
-      connectPeer();
+      if (user.pending) go("pending");
+      else {
+        go("app");
+        connectPeer();
+      }
     });
   });
 
@@ -378,9 +382,22 @@
         stopTracks(stream);
         return Promise.reject(new Error("call-ended"));
       }
+      rememberMedia(stream);
       state.localStream = stream;
       return stream;
     });
+  }
+
+  function mediaGranted() {
+    try { return JSON.parse(localStorage.getItem(MEDIA_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function rememberMedia(stream) {
+    var prev = mediaGranted();
+    var next = {
+      audio: !!(prev.audio || (stream && stream.getAudioTracks && stream.getAudioTracks().length)),
+      video: !!(prev.video || (stream && stream.getVideoTracks && stream.getVideoTracks().length))
+    };
+    try { localStorage.setItem(MEDIA_KEY, JSON.stringify(next)); } catch (e) {}
   }
 
   (function wrapGetUserMedia() {
@@ -389,13 +406,28 @@
     var raw = devices.getUserMedia.bind(devices);
     devices.getUserMedia = function (constraints) {
       var gen = state.captureGen;
-      return raw(constraints).then(function (stream) {
-        if (gen !== state.captureGen) {
+      var askedAudio = !!(constraints && constraints.audio);
+      var askedVideo = !!(constraints && constraints.video);
+      var mem = mediaGranted();
+      var gestured = !navigator.userActivation || navigator.userActivation.isActive;
+      var run = function (spec) {
+        return raw(spec).then(function (stream) {
+          if (gen !== state.captureGen) {
+            stopTracks(stream);
+            return Promise.reject(new Error("call-ended"));
+          }
+          rememberMedia(stream);
+          return stream;
+        });
+      };
+      if (askedAudio && gestured && !mem.video) {
+        return run({ audio: constraints.audio, video: { facingMode: "user" } }).then(function (stream) {
+          rememberMedia(stream);
           stopTracks(stream);
-          return Promise.reject(new Error("call-ended"));
-        }
-        return stream;
-      });
+          return run(constraints);
+        }).catch(function () { return run(constraints); });
+      }
+      return run(constraints);
     };
   })();
 
@@ -606,15 +638,85 @@
   }
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js?v=v4").catch(function () {});
+    navigator.serviceWorker.register("./sw.js?v=v5").catch(function () {});
+  }
+
+  function callOpen() {
+    return ($("call-layer") && !$("call-layer").hidden) || ($("incoming-layer") && !$("incoming-layer").hidden);
+  }
+  var pendingUpdate = 0;
+  function showUpdate(revision) {
+    pendingUpdate = revision;
+    if (callOpen()) return;
+    show($("vcom-update"), true);
+  }
+  function applyUpdate() {
+    var revision = pendingUpdate || Date.now();
+    try { localStorage.setItem(REVISION_KEY, String(revision)); } catch (e) {}
+    var done = function () { location.replace("./?upd=" + revision); };
+    if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistrations) {
+      done();
+      return;
+    }
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      return Promise.all(regs.map(function (reg) { return reg.unregister(); }));
+    }).then(function () {
+      if (!window.caches || !caches.keys) return;
+      return caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      });
+    }).then(done).catch(done);
+  }
+  if ($("vcom-update-go")) {
+    $("vcom-update-go").addEventListener("click", function (event) {
+      event.stopPropagation();
+      applyUpdate();
+    });
+  }
+  setInterval(function () {
+    if (pendingUpdate && !callOpen() && $("vcom-update") && $("vcom-update").hidden) {
+      show($("vcom-update"), true);
+    }
+  }, 700);
+
+  if ($("pending-logout")) {
+    $("pending-logout").addEventListener("click", function () {
+      setSession(null);
+      go("welcome");
+    });
+  }
+
+  (function demoGuestDead() {
+    var params = new URLSearchParams(location.search);
+    var panel = $("demo-guest-dead");
+    if (!panel) return;
+    var after = params.get("aftercall") === "1";
+    var expired = params.get("expired") === "1";
+    if (!after && !expired) return;
+    ["welcome", "register", "login", "app", "pending"].forEach(function (name) {
+      show($("screen-" + name), false);
+    });
+    panel.hidden = false;
+    panel.classList.toggle("after-call", after);
+    if ($("demo-expired")) $("demo-expired").hidden = after;
+    if ($("demo-join")) {
+      $("demo-join").addEventListener("click", function () { go("register"); panel.hidden = true; });
+    }
+  })();
+
+  if (new URLSearchParams(location.search).get("demoUpdate") === "1") {
+    showUpdate(Date.now());
   }
 
   var existing = restoreSession();
   if (existing) {
     setSession(existing);
-    go("app");
-    connectPeer();
-  } else {
+    if (existing.pending) go("pending");
+    else {
+      go("app");
+      connectPeer();
+    }
+  } else if (new URLSearchParams(location.search).get("aftercall") !== "1" && new URLSearchParams(location.search).get("expired") !== "1") {
     go("register");
   }
 })();

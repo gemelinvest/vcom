@@ -174,6 +174,136 @@
       if (window.vcomRouteOutputs) window.vcomRouteOutputs();
     }
   };
+  var MEDIA_KEY = "vcom.media.granted.v1";
+  function mediaGranted() {
+    try { return JSON.parse(localStorage.getItem(MEDIA_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function rememberMedia(stream) {
+    var prev = mediaGranted();
+    var next = {
+      audio: !!(prev.audio || (stream && stream.getAudioTracks && stream.getAudioTracks().length)),
+      video: !!(prev.video || (stream && stream.getVideoTracks && stream.getVideoTracks().length))
+    };
+    try { localStorage.setItem(MEDIA_KEY, JSON.stringify(next)); } catch (e) {}
+  }
+  function isOnCall() {
+    try {
+      var bloc = window.__vcomBloc;
+      if (bloc && bloc.c) {
+        if (bloc.c.gnY && bloc.c.gnY()) return true;
+        if (bloc.c.b) return true;
+      }
+    } catch (e) {}
+    if (window.__vcomRinging) return true;
+    var call = document.getElementById("call-layer");
+    if (call && !call.hidden) return true;
+    var incoming = document.getElementById("incoming-layer");
+    if (incoming && !incoming.hidden) return true;
+    var guestCall = document.querySelector("#vcom-guest [data-view=call]");
+    if (guestCall && !guestCall.hidden) return true;
+    return false;
+  }
+  function appHomeUrl() {
+    try {
+      if (/\.web\.app$/.test(location.hostname) || /firebaseapp\.com$/.test(location.hostname)) return "/";
+    } catch (e) {}
+    return "./";
+  }
+  function wireMediaPersist() {
+    var devices = navigator.mediaDevices;
+    if (!devices || !devices.getUserMedia || devices.getUserMedia.__vcomPersist) return;
+    var raw = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = function (constraints) {
+      var askedVideo = !!(constraints && constraints.video);
+      var askedAudio = !!(constraints && constraints.audio);
+      var mem = mediaGranted();
+      var run = function (spec) {
+        return raw(spec).then(function (stream) {
+          rememberMedia(stream);
+          return stream;
+        });
+      };
+      var canPrime = askedAudio && (!mem.audio || (askedVideo && !mem.video));
+      var gestured = !navigator.userActivation || navigator.userActivation.isActive;
+      if (canPrime && gestured && !mem.video) {
+        return run({ audio: constraints.audio, video: { facingMode: "user" } }).then(function (stream) {
+          rememberMedia(stream);
+          try { stream.getTracks().forEach(function (track) { track.stop(); }); } catch (e) {}
+          return run(constraints);
+        }).catch(function () { return run(constraints); });
+      }
+      return run(constraints);
+    };
+    devices.getUserMedia.__vcomPersist = true;
+    if (navigator.permissions && navigator.permissions.query && !navigator.permissions.query.__vcomPersist) {
+      var origQuery = navigator.permissions.query.bind(navigator.permissions);
+      navigator.permissions.query = function (desc) {
+        var name = desc && desc.name;
+        var mem = mediaGranted();
+        if ((name === "microphone" && mem.audio) || (name === "camera" && mem.video)) {
+          return Promise.resolve({
+            state: "granted",
+            onchange: null,
+            addEventListener: function () {},
+            removeEventListener: function () {}
+          });
+        }
+        return origQuery(desc);
+      };
+      navigator.permissions.query.__vcomPersist = true;
+    }
+  }
+  function wireUpdateBar() {
+    var bar = document.getElementById("vcom-update");
+    if (!bar || bar.__vcomWired) return;
+    bar.__vcomWired = true;
+    var span = bar.querySelector("span");
+    if (span) span.textContent = "קיימת גרסה חדשה לאפליקציה";
+    var pending = false;
+    var hold = function () {
+      if (!bar.hidden && isOnCall()) {
+        bar.hidden = true;
+        pending = true;
+      }
+    };
+    hold();
+    new MutationObserver(hold).observe(bar, { attributes: true, attributeFilter: ["hidden"] });
+    setInterval(function () {
+      if (pending && !isOnCall()) {
+        pending = false;
+        bar.hidden = false;
+      }
+    }, 700);
+  }
+  function wireApproval() {
+    var card = document.querySelector(".vcom-approval-card");
+    if (!card || card.__vcomWired) return;
+    card.__vcomWired = true;
+    var h2 = card.querySelector("h2");
+    var p = card.querySelector("p");
+    if (h2) h2.textContent = "הבקשה נשלחה בהצלחה";
+    if (p) {
+      p.innerHTML = 'אנו נעדכן כאן שהמנוי שלך אושר.<br>בברכה, צוות <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span>';
+    }
+    if (!document.getElementById("vcom-approval-skin")) {
+      var skin = document.createElement("style");
+      skin.id = "vcom-approval-skin";
+      skin.textContent = ".vcom-word .v{color:#34C759;font-weight:700}.vcom-word .com{color:#007AFF;font-weight:700}";
+      document.head.appendChild(skin);
+    }
+  }
+  function bootChrome() {
+    wireMediaPersist();
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      wireUpdateBar();
+      wireApproval();
+      if (tries > 40) clearInterval(timer);
+    }, 400);
+  }
+  bootChrome();
+
   window.vcomGuestCode = function (phone) {
     var key = digits(phone);
     window.__vcomGuestLookups = window.__vcomGuestLookups || [];
@@ -227,10 +357,27 @@
       hang: root.querySelector("[data-hang]"),
       mute: root.querySelector("[data-mute]"),
       speaker: root.querySelector("[data-speaker]"),
-      deadText: root.querySelector("[data-dead]")
+      deadText: root.querySelector("[data-dead]"),
+      expired: root.querySelector("[data-expired]"),
+      join: root.querySelector("[data-join]"),
+      deadView: root.querySelector("[data-view=dead]")
     };
     var session = null;
     var started = 0;
+    function justEndedKey() { return "vcom.justEnded." + code; }
+    function markJustEnded() {
+      try { sessionStorage.setItem(justEndedKey(), "1"); } catch (e) {}
+    }
+    function wasJustEnded() {
+      try { return sessionStorage.getItem(justEndedKey()) === "1"; } catch (e) { return false; }
+    }
+    function showDead() {
+      if ((session && session.answered) || (nodes.call && !nodes.call.hidden)) markJustEnded();
+      var afterCall = wasJustEnded();
+      if (nodes.deadView) nodes.deadView.classList.toggle("after-call", afterCall);
+      if (nodes.expired) nodes.expired.hidden = afterCall;
+      show("dead");
+    }
     function show(which) {
       nodes.wait.hidden = which !== "wait";
       nodes.call.hidden = which !== "call";
@@ -244,8 +391,7 @@
         if (nodes.stage) nodes.stage.hidden = true;
         if (session) session.close();
         if (window.vcomReleaseCapture) window.vcomReleaseCapture();
-        nodes.deadText.textContent = data && data.status === "ended" && data.callStartedAt ? "השיחה הסתיימה" : "הקישור פג תוקף";
-        show("dead");
+        showDead();
         return;
       }
       if (data.status === "waiting" || !data.offer) {
@@ -305,8 +451,7 @@
             nodes.timer.hidden = false;
           }
         }, function () {
-          nodes.deadText.textContent = "הקישור לא זמין";
-          show("dead");
+          showDead();
         });
         nodes.answer.addEventListener("click", function () {
           var data = window.__vcomGuestData;
@@ -316,12 +461,14 @@
           window.vcomStopRing();
           var wantVideo = data.video === true;
           var audioAsk = { echoCancellation: true, noiseSuppression: true };
-          var media = wantVideo
-            ? navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: { facingMode: "user" } }).catch(function () {
-              return navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
-            })
-            : navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
+          var media = navigator.mediaDevices.getUserMedia({
+            audio: audioAsk,
+            video: wantVideo ? { facingMode: "user" } : false
+          }).catch(function () {
+            return navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
+          });
           session = openAnswer(fs, db, ref, data, media, remote, nodes);
+          markJustEnded();
           nodes.answer.hidden = true;
           nodes.decline.hidden = true;
           nodes.hang.hidden = false;
@@ -331,13 +478,20 @@
           nodes.timer.hidden = true;
           started = Date.now();
         });
+        if (nodes.join) {
+          nodes.join.addEventListener("click", function () {
+            location.href = appHomeUrl();
+          });
+        }
         nodes.decline.addEventListener("click", function () {
           window.vcomStopRing();
+          markJustEnded();
           if (session) session.close();
           if (window.vcomReleaseCapture) window.vcomReleaseCapture();
           fs.updateDoc(ref, { status: "ended" }).catch(function () {});
         });
         nodes.hang.addEventListener("click", function () {
+          markJustEnded();
           if (session) session.close();
           if (window.vcomReleaseCapture) window.vcomReleaseCapture();
           fs.updateDoc(ref, { status: "ended" }).catch(function () {});
@@ -364,13 +518,11 @@
           nodes.timer.textContent = clock(Date.now() - from);
         }, 500);
       }).catch(function () {
-        nodes.deadText.textContent = "הקישור לא זמין";
-        show("dead");
+        showDead();
       });
     }
     if (!code) {
-      nodes.deadText.textContent = "הקישור פג תוקף";
-      show("dead");
+      showDead();
       return;
     }
     show("wait");
@@ -1131,15 +1283,22 @@
       + ".guest-controls .hang{background:#FF3B30}"
       + ".guest-controls .tool{background:#E5E5EA;color:#1C1C1E}"
       + ".guest-controls .tool.on{background:#007AFF;color:#fff}"
-      + ".guest-dead{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#F2F2F7;text-align:center;padding:24px}"
-      + ".guest-dead h1{margin:0 0 12px;color:#007AFF}"
-      + ".guest-dead p{margin:0;font-size:24px}";
+      + ".guest-dead{min-height:100dvh;display:flex;flex-direction:column;align-items:center;background:#F2F2F7;text-align:center;padding:calc(env(safe-area-inset-top,0px) + 36px) 22px calc(env(safe-area-inset-bottom,0px) + 28px)}"
+      + ".guest-dead.after-call{justify-content:center}"
+      + ".guest-dead:not(.after-call){justify-content:flex-start;padding-top:18vh}"
+      + ".guest-dead .guest-logo{margin:0 0 18px;font-size:34px}"
+      + ".guest-expired{margin:0;color:#3A3A3C;font-size:18px;font-weight:600}"
+      + ".guest-join{appearance:none;-webkit-appearance:none;margin-top:22px;border:0;background:#fff;color:#3A3A3C;border-radius:16px;padding:10px 16px;font:600 14px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 24px rgba(28,39,61,.08);max-width:min(340px,100%)}"
+      + ".guest-dead:not(.after-call) .guest-join{margin-top:auto}"
+      + ".guest-join .vcom-word{display:inline-block;margin:0 4px}"
+      + ".guest-join .v{color:#34C759;font-weight:700}"
+      + ".guest-join .com{color:#007AFF;font-weight:700}";
   }
   function guestHtml() {
     return ''
       + '<section class="guest-wait" data-view="wait"><img src="/icons/vcom-splash.png?v=call11" alt="VCOM"><h1>VCOM</h1><p>המתן לשיחה</p></section>'
       + '<section class="guest-call" data-view="call" hidden><div class="guest-stage" data-stage hidden><video data-remote autoplay playsinline></video><video data-local autoplay playsinline muted></video></div><header class="guest-logo" aria-label="VCOM"><span class="com">COM</span><span class="v">V</span></header><div class="guest-mid"><h2 data-name></h2><p data-status>שיחה נכנסת</p><p data-timer hidden>0:00</p></div>'
       + '<div class="guest-controls"><button type="button" class="tool" data-speaker hidden>רמקול</button><button type="button" class="answer" data-answer>ענה</button><button type="button" class="hang" data-decline>דחה</button><button type="button" class="hang" data-hang hidden>נתק</button><button type="button" class="tool" data-mute hidden>השתק</button></div></section>'
-      + '<section class="guest-dead" data-view="dead" hidden><h1>VCOM</h1><p data-dead>הקישור פג תוקף</p></section>';
+      + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה לא בתוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join>מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</button></section>';
   }
 })();
