@@ -646,15 +646,27 @@
   function callOpen() {
     return ($("call-layer") && !$("call-layer").hidden) || ($("incoming-layer") && !$("incoming-layer").hidden);
   }
+  var SEEN_KEY = "vcom_update_seen";
+  var PENDING_KEY = "vcom_pending_revision";
   var pendingUpdate = 0;
+  function seenUpdateRevision() {
+    try { return Number(localStorage.getItem(SEEN_KEY) || 0) || 0; } catch (e) { return 0; }
+  }
   function showUpdate(revision) {
+    revision = Number(revision || 0);
+    if (!revision || revision <= seenUpdateRevision()) return;
     pendingUpdate = revision;
+    try { localStorage.setItem(PENDING_KEY, String(revision)); } catch (e) {}
     if (callOpen()) return;
     show($("vcom-update"), true);
   }
   function applyUpdate() {
     var revision = pendingUpdate || Date.now();
-    try { localStorage.setItem(REVISION_KEY, String(revision)); } catch (e) {}
+    try {
+      localStorage.setItem(REVISION_KEY, String(revision));
+      localStorage.setItem(SEEN_KEY, String(revision));
+      localStorage.removeItem(PENDING_KEY);
+    } catch (e) {}
     var done = function () { location.replace("./?upd=" + revision); };
     if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistrations) {
       done();
@@ -706,9 +718,16 @@
     }
   })();
 
-  if (new URLSearchParams(location.search).get("demoUpdate") === "1") {
-    showUpdate(Date.now());
-  }
+  (function restorePendingUpdate() {
+    var params = new URLSearchParams(location.search);
+    if (params.get("demoUpdate") === "1") {
+      showUpdate(Date.now());
+      return;
+    }
+    var storedPending = 0;
+    try { storedPending = Number(localStorage.getItem(PENDING_KEY) || 0) || 0; } catch (e) {}
+    if (storedPending) showUpdate(storedPending);
+  })();
 
   var existing = restoreSession();
   if (existing) {

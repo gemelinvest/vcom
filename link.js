@@ -253,27 +253,102 @@
       navigator.permissions.query.__vcomPersist = true;
     }
   }
+  var UPDATE_SEEN_KEY = "vcom_update_seen";
+  function seenUpdateRevision() {
+    try { return Number(localStorage.getItem(UPDATE_SEEN_KEY) || 0) || 0; } catch (e) { return 0; }
+  }
+  function rememberSeenRevision(revision) {
+    try {
+      localStorage.setItem(UPDATE_SEEN_KEY, String(revision));
+      localStorage.setItem("vcom_revision", String(revision));
+    } catch (e) {}
+  }
+  function applyAppUpdate(revision) {
+    revision = Number(revision || window.__vcomPendingRevision || 0);
+    if (!revision) return;
+    rememberSeenRevision(revision);
+    var done = function () { location.replace("/?upd=" + revision); };
+    if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistrations) {
+      done();
+      return;
+    }
+    navigator.serviceWorker.getRegistrations().then(function (regs) {
+      return Promise.all(regs.map(function (reg) { return reg.unregister(); }));
+    }).then(function () {
+      if (!window.caches || !caches.keys) return;
+      return caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      });
+    }).then(done).catch(done);
+  }
+  function revealUpdateBar() {
+    if (guestCode) return;
+    var bar = document.getElementById("vcom-update");
+    if (!bar || !window.__vcomPendingRevision) return;
+    var span = bar.querySelector("span");
+    if (span) span.textContent = "קיימת גרסה חדשה לאפליקציה";
+    if (isOnCall()) {
+      bar.hidden = true;
+      return;
+    }
+    bar.hidden = false;
+  }
+  function offerUpdate(revision) {
+    revision = Number(revision || 0);
+    if (!revision || guestCode) return;
+    if (revision <= seenUpdateRevision()) return;
+    window.__vcomPendingRevision = revision;
+    revealUpdateBar();
+  }
   function wireUpdateBar() {
     var bar = document.getElementById("vcom-update");
     if (!bar || bar.__vcomWired) return;
     bar.__vcomWired = true;
     var span = bar.querySelector("span");
     if (span) span.textContent = "קיימת גרסה חדשה לאפליקציה";
-    var pending = false;
-    var hold = function () {
-      if (!bar.hidden && isOnCall()) {
+    var go = document.getElementById("vcom-update-go");
+    if (go && !go.__vcomWired) {
+      go.__vcomWired = true;
+      go.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        applyAppUpdate(window.__vcomPendingRevision);
+      }, true);
+    }
+    new MutationObserver(function () {
+      if (!window.__vcomPendingRevision) return;
+      if (isOnCall()) {
         bar.hidden = true;
-        pending = true;
+        return;
       }
-    };
-    hold();
-    new MutationObserver(hold).observe(bar, { attributes: true, attributeFilter: ["hidden"] });
+      if (bar.hidden) bar.hidden = false;
+    }).observe(bar, { attributes: true, attributeFilter: ["hidden"] });
     setInterval(function () {
-      if (pending && !isOnCall()) {
-        pending = false;
-        bar.hidden = false;
-      }
+      if (window.__vcomPendingRevision) revealUpdateBar();
     }, 700);
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") revealUpdateBar();
+    });
+    window.addEventListener("pageshow", function () { revealUpdateBar(); });
+    watchRemoteUpdate();
+  }
+  function watchRemoteUpdate() {
+    if (watchRemoteUpdate.started || guestCode) return;
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.onSnapshot || !fs.doc || !fs.getFirestore) {
+        if (tries > 120) clearInterval(timer);
+        return;
+      }
+      clearInterval(timer);
+      watchRemoteUpdate.started = true;
+      fs.onSnapshot(fs.doc(fs.getFirestore(), "app", "update"), function (snap) {
+        var revision = snap && snap.exists && snap.exists() ? Number((snap.data() || {}).revision || 0) : 0;
+        offerUpdate(revision);
+      }, function () {});
+    }, 400);
   }
   function wireApproval() {
     var card = document.querySelector(".vcom-approval-card");
