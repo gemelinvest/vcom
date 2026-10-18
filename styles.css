@@ -452,27 +452,49 @@ button { cursor: pointer; }
   font-weight: 400;
   line-height: 1;
 }
+.guest-dead-demo.after-call .guest-logo,
+.guest-dead-demo.after-call .guest-expired { display: none !important; }
 .guest-expired {
-  margin: 0;
+  margin: 0 0 12px;
   color: #3A3A3C;
   font-size: 18px;
   font-weight: 600;
 }
 .guest-join {
   appearance: none;
+  display: flex;
+  flex-direction: row;
+  direction: ltr;
+  align-items: center;
+  gap: 10px;
   margin-top: 22px;
   border: 0;
   background: #fff;
   color: #3A3A3C;
   border-radius: 16px;
-  padding: 10px 16px;
+  padding: 8px 14px 8px 8px;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
   box-shadow: 0 8px 24px rgba(28, 39, 61, 0.08);
-  max-width: min(340px, 100%);
+  max-width: min(360px, 100%);
+  width: 100%;
+  text-align: right;
 }
 .guest-dead-demo:not(.after-call) .guest-join { margin-top: auto; }
+.guest-join-handset {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  object-fit: contain;
+  background: transparent;
+  pointer-events: none;
+}
+.guest-join-text {
+  flex: 1;
+  direction: rtl;
+  text-align: right;
+}
 .guest-join .vcom-word { display: inline-block; margin: 0 4px; }
 
 @media (min-width: 720px) {

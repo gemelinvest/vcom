@@ -439,16 +439,11 @@
     };
     var session = null;
     var started = 0;
-    function justEndedKey() { return "vcom.justEnded." + code; }
-    function markJustEnded() {
-      try { sessionStorage.setItem(justEndedKey(), "1"); } catch (e) {}
-    }
-    function wasJustEnded() {
-      try { return sessionStorage.getItem(justEndedKey()) === "1"; } catch (e) { return false; }
-    }
+    var hadCallThisVisit = false;
+    function markHadCall() { hadCallThisVisit = true; }
     function showDead() {
-      if ((session && session.answered) || (nodes.call && !nodes.call.hidden)) markJustEnded();
-      var afterCall = wasJustEnded();
+      if ((session && session.answered) || (nodes.call && !nodes.call.hidden)) markHadCall();
+      var afterCall = hadCallThisVisit;
       if (nodes.deadView) nodes.deadView.classList.toggle("after-call", afterCall);
       if (nodes.expired) nodes.expired.hidden = afterCall;
       show("dead");
@@ -484,6 +479,7 @@
         nodes.hang.hidden = true;
         nodes.mute.hidden = true;
         nodes.speaker.hidden = true;
+        markHadCall();
         show("call");
         window.vcomStartRing();
         return;
@@ -543,7 +539,7 @@
             return navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
           });
           session = openAnswer(fs, db, ref, data, media, remote, nodes);
-          markJustEnded();
+          markHadCall();
           nodes.answer.hidden = true;
           nodes.decline.hidden = true;
           nodes.hang.hidden = false;
@@ -560,13 +556,13 @@
         }
         nodes.decline.addEventListener("click", function () {
           window.vcomStopRing();
-          markJustEnded();
+          markHadCall();
           if (session) session.close();
           if (window.vcomReleaseCapture) window.vcomReleaseCapture();
           fs.updateDoc(ref, { status: "ended" }).catch(function () {});
         });
         nodes.hang.addEventListener("click", function () {
-          markJustEnded();
+          markHadCall();
           if (session) session.close();
           if (window.vcomReleaseCapture) window.vcomReleaseCapture();
           fs.updateDoc(ref, { status: "ended" }).catch(function () {});
@@ -1362,9 +1358,12 @@
       + ".guest-dead.after-call{justify-content:center}"
       + ".guest-dead:not(.after-call){justify-content:flex-start;padding-top:18vh}"
       + ".guest-dead .guest-logo{margin:0 0 18px;font-size:34px}"
-      + ".guest-expired{margin:0;color:#3A3A3C;font-size:18px;font-weight:600}"
-      + ".guest-join{appearance:none;-webkit-appearance:none;margin-top:22px;border:0;background:#fff;color:#3A3A3C;border-radius:16px;padding:10px 16px;font:600 14px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 24px rgba(28,39,61,.08);max-width:min(340px,100%)}"
+      + ".guest-dead.after-call .guest-logo,.guest-dead.after-call .guest-expired{display:none!important}"
+      + ".guest-expired{margin:0 0 12px;color:#3A3A3C;font-size:18px;font-weight:600}"
+      + ".guest-join{appearance:none;-webkit-appearance:none;display:flex;flex-direction:row;direction:ltr;align-items:center;gap:10px;margin-top:22px;border:0;background:#fff;color:#3A3A3C;border-radius:16px;padding:8px 14px 8px 8px;font:600 14px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 8px 24px rgba(28,39,61,.08);max-width:min(360px,100%);width:100%;text-align:right}"
       + ".guest-dead:not(.after-call) .guest-join{margin-top:auto}"
+      + ".guest-join-handset{width:44px;height:44px;flex:0 0 44px;object-fit:contain;background:transparent;pointer-events:none}"
+      + ".guest-join-text{flex:1;direction:rtl;text-align:right}"
       + ".guest-join .vcom-word{display:inline-block;margin:0 4px}"
       + ".guest-join .v{color:#34C759;font-weight:700}"
       + ".guest-join .com{color:#007AFF;font-weight:700}";
@@ -1374,6 +1373,6 @@
       + '<section class="guest-wait" data-view="wait"><img src="/icons/vcom-splash.png?v=call11" alt="VCOM"><h1>VCOM</h1><p>המתן לשיחה</p></section>'
       + '<section class="guest-call" data-view="call" hidden><div class="guest-stage" data-stage hidden><video data-remote autoplay playsinline></video><video data-local autoplay playsinline muted></video></div><header class="guest-logo" aria-label="VCOM"><span class="com">COM</span><span class="v">V</span></header><div class="guest-mid"><h2 data-name></h2><p data-status>שיחה נכנסת</p><p data-timer hidden>0:00</p></div>'
       + '<div class="guest-controls"><button type="button" class="tool" data-speaker hidden>רמקול</button><button type="button" class="answer" data-answer>ענה</button><button type="button" class="hang" data-decline>דחה</button><button type="button" class="hang" data-hang hidden>נתק</button><button type="button" class="tool" data-mute hidden>השתק</button></div></section>'
-      + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה לא בתוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join>מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</button></section>';
+      + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה פג תוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join><img class="guest-join-handset" src="/icons/vcom-splash.png?v=call11" alt=""><span class="guest-join-text" dir="rtl">מנוי <span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span> לחץ להגשת בקשה</span></button></section>';
   }
 })();
