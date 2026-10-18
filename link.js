@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "fix1";
+  window.__VCOM_LINK_BUILD = "dial2";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -584,23 +584,53 @@
   }
   bootChrome();
 
+  window.vcomLinkStillVisible = function (row, now) {
+    now = now == null ? Date.now() : now;
+    if (!row || !row.code) return false;
+    if (row.status === "ended") return false;
+    var exp = asMillis(row.expiresAt);
+    if (exp && exp <= now) return row.status === "active";
+    return true;
+  };
+
   window.vcomGuestCode = function (phone) {
     var key = digits(phone);
     var raw = String(phone || "").replace(/^\s+|\s+$/g, "").toLowerCase();
     window.__vcomGuestLookups = window.__vcomGuestLookups || [];
     if (window.__vcomGuestLookups.length < 20) window.__vcomGuestLookups.push(key || raw);
     var book = window.__vcomGuestBook || {};
-    function usable(row) {
-      if (!row || !row.code) return false;
-      if (row.status === "ended") return false;
-      if (row.status === "active" || row.status === "ringing") return true;
-      var exp = asMillis(row.expiresAt);
-      return !exp || exp > Date.now();
-    }
     if (!key) return "";
     var row = book[key];
-    if (usable(row)) return row.code;
+    if (window.vcomLinkStillVisible(row)) return row.code;
     return "";
+  };
+
+  window.vcomPlaceLinkCall = function (row, io) {
+    io = io || {};
+    var phone = digits(row && (row.phone || row.tempPhone));
+    var code = row && row.code;
+    if (!phone || !code) return { ok: false, reason: "missing" };
+    if (!window.vcomLinkStillVisible(row)) return { ok: false, reason: "expired" };
+    var busy = false;
+    try { busy = !!(io.fy && io.fy()); } catch (eFy) {}
+    try { if (io.isOnCall && io.isOnCall()) busy = true; } catch (eOn) {}
+    if (busy) return { ok: false, reason: "busy" };
+    if (io.closeDrawer) io.closeDrawer();
+    if (io.pasteDigits) io.pasteDigits(phone);
+    if (typeof io.dialPress === "function") {
+      io.dialPress();
+      return { ok: true, phone: phone, via: "keypad" };
+    }
+    return { ok: false, reason: "no-keypad" };
+  };
+
+  window.vcomShouldAutoStartGuest = function (data, io) {
+    io = io || {};
+    if (!data || data.offer) return false;
+    if (data.status !== "ringing" && !data.guestReady) return false;
+    try { if (io.fy && io.fy()) return false; } catch (eFy) {}
+    try { if (io.isOnCall && io.isOnCall()) return false; } catch (eOn) {}
+    return true;
   };
 
   if (guestCode) {
@@ -1015,11 +1045,7 @@
       return Object.keys(window.__vcomGuestBook).map(function (phone) {
         return window.__vcomGuestBook[phone];
       }).filter(function (row) {
-        if (!row) return false;
-        if (row.status === "active" || row.status === "ringing") return true;
-        if (row.status === "ended") return false;
-        var exp = asMillis(row.expiresAt);
-        return !exp || exp > now;
+        return window.vcomLinkStillVisible(row, now);
       }).sort(function (a, b) { return asMillis(b.expiresAt) - asMillis(a.expiresAt); });
     }
     function currentRow() {
@@ -1083,14 +1109,35 @@
       card.appendChild(copyLink);
       banner.appendChild(card);
     }
+    function linkCallIo() {
+      return {
+        isOnCall: isOnCall,
+        fy: function () {
+          try { return !!(window.__vcomBloc && window.__vcomBloc.fy); } catch (e) { return false; }
+        },
+        closeDrawer: function () { applyDrawer(0); },
+        pasteDigits: window.__vcomPasteDigits,
+        dialPress: window.__vcomDialPress
+      };
+    }
     function startOwnerGuestCall(code) {
       if (!code || window.__vcomGuestActive === code) return;
-      if (isOnCall()) return;
-      try { if (window.__vcomBloc && window.__vcomBloc.fy) return; } catch (e0) {}
-      try {
-        if (window.vcomStartGuestCall) window.vcomStartGuestCall(code, false);
-      } catch (e) {}
-      try { applyDrawer(0); } catch (e2) {}
+      var row = findRow(code);
+      if (!row) {
+        Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+          if (window.__vcomGuestBook[phone].code === code) row = window.__vcomGuestBook[phone];
+        });
+      }
+      if (!row) row = { code: code, phone: "" };
+      var tries = 0;
+      function attempt() {
+        var result = window.vcomPlaceLinkCall(row, linkCallIo());
+        if (result && result.ok) return;
+        if (result && result.reason === "busy") return;
+        tries += 1;
+        if (tries < 12 && result && result.reason === "no-keypad") setTimeout(attempt, 200);
+      }
+      attempt();
     }
     function watch(code) {
       var fs = fsNow();
@@ -1112,7 +1159,7 @@
           row.status = data.status || row.status;
           row.expiresAt = asMillis(data.expiresAt) || row.expiresAt;
           row.fromLink = true;
-          if (waiting && !data.offer && (data.status === "ringing" || data.guestReady)) {
+          if (waiting && window.vcomShouldAutoStartGuest(data, linkCallIo())) {
             window.__vcomAutoStarted = window.__vcomAutoStarted || {};
             if (!window.__vcomAutoStarted[code]) {
               window.__vcomAutoStarted[code] = 1;
@@ -1329,9 +1376,7 @@
       var now = Date.now();
       Object.keys(window.__vcomGuestBook).forEach(function (phone) {
         var row = window.__vcomGuestBook[phone];
-        if (!row || row.status === "active" || row.status === "ringing") return;
-        var exp = asMillis(row.expiresAt);
-        if (!exp || exp > now) return;
+        if (window.vcomLinkStillVisible(row, now)) return;
         forget(row);
       });
       var row = currentRow();
@@ -1371,9 +1416,8 @@
             var row = links[code] || {};
             var phone = digits(row.phone);
             if (!phone) return;
-            livePhones[phone] = 1;
             var prev = window.__vcomGuestBook[phone];
-            window.__vcomGuestBook[phone] = {
+            var merged = {
               code: code,
               name: row.name || (prev && prev.name) || "",
               phone: phone,
@@ -1382,6 +1426,9 @@
               url: shareUrl(code),
               fromLink: !!(prev && prev.fromLink)
             };
+            if (!window.vcomLinkStillVisible(merged)) return;
+            livePhones[phone] = 1;
+            window.__vcomGuestBook[phone] = merged;
             watch(code);
           });
           Object.keys(window.__vcomGuestBook).forEach(function (phone) {
@@ -1597,16 +1644,16 @@
       + "#vcom-link-menu[hidden],#vcom-link-form[hidden],#vcom-link-banner[hidden],#vcom-dial-paste[hidden],#vcom-menu-logo[hidden]{display:none!important}"
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
-      + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#8E8E93;text-align:right;font:400 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#8E8E93}"
+      + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#1C1C1E}"
       + ".vcom-link-open-icon svg{display:block}"
-      + ".vcom-link-open-text{font-weight:400}"
+      + ".vcom-link-open-text{font-weight:600}"
       + "#vcom-link-form{display:flex;flex-direction:column;gap:8px;margin:0}"
       + "#vcom-link-name{width:100%;box-sizing:border-box;border:1px solid #E5E5EA;border-radius:12px;background:#fff;color:#1C1C1E;padding:12px 14px;font:16px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-error{min-height:18px;margin:0;color:#C62828;font-size:13px;text-align:right}"
       + "#vcom-link-form [data-ok]{min-height:44px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;touch-action:manipulation}"
       + ".vcom-link-live{background:#F2F2F7;border-radius:16px;padding:12px 14px;text-align:right}"
-      + ".vcom-link-guest{font-size:16px;font-weight:700}"
+      + ".vcom-link-guest{font-size:16px;font-weight:700;direction:rtl;unicode-bidi:isolate;overflow:visible;white-space:normal;word-break:break-word}"
       + ".vcom-link-copy{display:block;width:100%;box-sizing:border-box;min-height:44px;margin-top:8px;border:0;border-radius:12px;background:#007AFF;color:#fff;padding:0 12px;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-phone{display:block;width:100%;margin-top:8px;font-size:22px;font-weight:700;letter-spacing:.4px;direction:ltr;unicode-bidi:isolate;text-align:right;white-space:nowrap;touch-action:manipulation}"
       + ".vcom-link-meta{display:block;margin-top:4px;color:#007AFF;font-size:14px;font-weight:600;text-align:right}"
