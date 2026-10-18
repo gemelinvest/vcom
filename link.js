@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "ear1";
+  window.__VCOM_LINK_BUILD = "ear2";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -632,6 +632,116 @@
   window.vcomCallAudioRoute = function (speakerOn) {
     return speakerOn ? "speaker" : "earpiece";
   };
+  window.vcomBuildRingbackWav = function () {
+    var sampleRate = 8000;
+    var duration = 1;
+    var n = sampleRate * duration;
+    var dataSize = n * 2;
+    var bytes = new Uint8Array(44 + dataSize);
+    var view = new DataView(bytes.buffer);
+    function ascii(offset, text) {
+      for (var i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i);
+    }
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, dataSize, true);
+    for (var i = 0; i < n; i++) {
+      var t = i / sampleRate;
+      var env = t < 0.02 ? t / 0.02 : (t > 0.98 ? (1 - t) / 0.02 : 1);
+      var sample = (Math.sin(2 * Math.PI * 440 * t) + Math.sin(2 * Math.PI * 480 * t)) * 0.16 * env;
+      if (sample > 1) sample = 1;
+      if (sample < -1) sample = -1;
+      view.setInt16(44 + i * 2, sample * 32767, true);
+    }
+    return bytes;
+  };
+  window.vcomApplyCallAudioRoute = function (el) {
+    var speaker = !!window.__vcomSpeaker;
+    var route = window.vcomCallAudioRoute(speaker);
+    window.__vcomRingbackRoute = route;
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = speaker ? "auto" : "play-and-record";
+    } catch (eSess) {}
+    var sink = speaker ? "default" : "communications";
+    window.__vcomRingbackSink = sink;
+    if (el) {
+      el.volume = speaker ? 1 : 0.45;
+      if (typeof el.setSinkId === "function") {
+        var pending = el.setSinkId(sink);
+        if (pending && pending.catch) pending.catch(function () {});
+      }
+    }
+    if (window.vcomRouteOutputs) window.vcomRouteOutputs();
+    return route;
+  };
+  function ringbackEl() {
+    var el = document.getElementById("vcom-guest-caller") || document.getElementById("vcom-ringback");
+    if (el) return el;
+    el = document.createElement("audio");
+    el.id = "vcom-ringback";
+    el.setAttribute("playsinline", "true");
+    el.setAttribute("webkit-playsinline", "true");
+    el.autoplay = true;
+    el.hidden = true;
+    (document.documentElement || document.body).appendChild(el);
+    return el;
+  }
+  function ringbackUrl() {
+    if (window.__vcomRingbackUrl) return window.__vcomRingbackUrl;
+    if (typeof Blob === "undefined" || typeof URL === "undefined" || !URL.createObjectURL) return "";
+    window.__vcomRingbackUrl = URL.createObjectURL(new Blob([window.vcomBuildRingbackWav()], { type: "audio/wav" }));
+    return window.__vcomRingbackUrl;
+  }
+  window.vcomStartRingback = function () {
+    if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
+    else if (!window.__vcomSpeakerTouched) {
+      window.__vcomSpeaker = false;
+      try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (eEar) {}
+    }
+    window.__vcomRingbackOn = true;
+    var el = ringbackEl();
+    if (el && el.srcObject) return;
+    window.vcomApplyCallAudioRoute(el);
+    var url = ringbackUrl();
+    function beep() {
+      if (!window.__vcomRingbackOn || !el || el.srcObject) return;
+      window.vcomApplyCallAudioRoute(el);
+      if (url && el.getAttribute("src") !== url) el.src = url;
+      try { el.currentTime = 0; } catch (eT) {}
+      var play = el.play && el.play();
+      if (play && play.catch) play.catch(function () {});
+    }
+    if (window.__vcomRingbackTimer) clearInterval(window.__vcomRingbackTimer);
+    beep();
+    window.__vcomRingbackTimer = setInterval(beep, 4000);
+    window.__vcomRingbackPlays = (window.__vcomRingbackPlays || 0) + 1;
+  };
+  window.vcomStopRingback = function () {
+    window.__vcomRingbackOn = false;
+    if (window.__vcomRingbackTimer) {
+      clearInterval(window.__vcomRingbackTimer);
+      window.__vcomRingbackTimer = null;
+    }
+    var el = document.getElementById("vcom-guest-caller") || document.getElementById("vcom-ringback");
+    if (el && !el.srcObject) {
+      try { el.pause(); } catch (eP) {}
+      try { el.removeAttribute("src"); el.src = ""; } catch (eS) {}
+    }
+  };
+  window.vcomRouteRingback = function () {
+    if (!window.__vcomRingbackOn) return;
+    window.vcomApplyCallAudioRoute(ringbackEl());
+  };
   window.vcomGuestAnswerPayload = function (answer) {
     if (!answer || !answer.sdp) return null;
     return {
@@ -1059,6 +1169,7 @@
     remote.id = "vcom-guest-caller";
     remote.autoplay = true;
     remote.setAttribute("playsinline", "true");
+    remote.setAttribute("webkit-playsinline", "true");
     remote.hidden = true;
     document.body.appendChild(remote);
     function addCallerVideo(id, muted) {
@@ -1569,7 +1680,6 @@
     caller = { pc: pc, fs: fs, ref: ref, code: code, local: null, closed: false, seen: {}, queued: [], remoteSet: false, answerSeen: false, markedLive: false, video: !!video };
     var current = caller;
     if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
-    startBack();
     pc.onicecandidate = function (event) {
       if (!event.candidate || current.closed || token !== window.__vcomGuestToken) return;
       var item = {
@@ -1581,9 +1691,12 @@
     };
     pc.ontrack = function (event) {
       var stream = event.streams[0];
+      stopBack();
       var audio = document.getElementById("vcom-guest-caller");
       if (audio) {
+        try { audio.removeAttribute("src"); } catch (eSrc) {}
         audio.srcObject = stream;
+        window.vcomApplyCallAudioRoute(audio);
         var play = audio.play();
         if (play && play.catch) play.catch(function () {});
       }
@@ -1668,6 +1781,8 @@
         return null;
       }
       current.local = stream;
+      if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
+      startBack();
       var localVideo = document.getElementById("vcom-guest-local-video");
       if (localVideo && stream.getVideoTracks && stream.getVideoTracks().length) {
         localVideo.srcObject = stream;

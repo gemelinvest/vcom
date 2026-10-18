@@ -66,6 +66,9 @@ function loadLink() {
     Array: Array,
     Promise: Promise,
     JSON: JSON,
+    DataView: DataView,
+    Blob: Blob,
+    URL: URL,
     setTimeout: setTimeout,
     clearTimeout: clearTimeout,
     setInterval: function () { return 0; },
@@ -124,6 +127,38 @@ test("guest answer session starts on earpiece, not speaker", function () {
   assert.match(src, /function openAnswer\(/);
   assert.match(src, /speaker: !!window\.vcomDefaultSpeakerOn/);
   assert.doesNotMatch(src, /speaker: true/);
+});
+
+test("outgoing ringback waits for the local mic before playing", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  const start = src.match(/function startCaller\([\s\S]*?mediaPromise\.then/);
+  assert.ok(start, "startCaller exists");
+  assert.equal(start[0].includes("startBack()"), false, "must not ring before getUserMedia");
+  assert.match(src, /current\.local = stream;[\s\S]{0,500}startBack\(\)/);
+});
+
+test("ringback is a call-route WAV, not a Web Audio speaker tone", function () {
+  const w = loadLink();
+  const wav = w.vcomBuildRingbackWav();
+  assert.ok(wav && wav.byteLength > 44);
+  assert.equal(String.fromCharCode(wav[0], wav[1], wav[2], wav[3]), "RIFF");
+  const src = fs.readFileSync(LINK, "utf8");
+  const impl = src.match(/window\.vcomStartRingback = function[\s\S]*?\n  \};/);
+  assert.ok(impl, "vcomStartRingback is defined in link.js");
+  assert.equal(impl[0].includes("createOscillator"), false);
+  assert.equal(impl[0].includes("ctx.destination"), false);
+  assert.match(src, /function ringbackEl\([\s\S]{0,400}vcom-guest-caller/);
+});
+
+test("call audio route uses earpiece on iOS session and Android communications sink", function () {
+  const w = loadLink();
+  w.__vcomSpeaker = false;
+  const ear = w.vcomApplyCallAudioRoute({ volume: 1, setSinkId: function (id) { this.sink = id; return Promise.resolve(); } });
+  assert.equal(ear, "earpiece");
+  assert.equal(w.__vcomRingbackSink, "communications");
+  w.__vcomSpeaker = true;
+  const spk = w.vcomApplyCallAudioRoute({ volume: 1, setSinkId: function (id) { this.sink = id; return Promise.resolve(); } });
+  assert.equal(spk, "speaker");
 });
 
 test("hangup from either side writes ended and closes both UIs", function () {
