@@ -93,14 +93,13 @@ function guestBook() {
   };
 }
 
-test("before: menu חייג used to start WebRTC without the keypad Dial path", function () {
+test("keypad Dial still uses vcomGuestCode, not a drawer WebRTC shortcut", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  const fn = src.match(/function startOwnerGuestCall\([\s\S]*?\n    \}/);
-  assert.ok(fn, "startOwnerGuestCall exists");
-  assert.equal(fn[0].includes("vcomStartGuestCall(code"), false,
-    "חייג must not call vcomStartGuestCall directly");
-  assert.equal(fn[0].includes("vcomPlaceLinkCall") || fn[0].includes("dialPress") || fn[0].includes("__vcomDialPress"), true,
-    "חייג must go through the keypad Dial hook");
+  assert.match(src, /window\.vcomGuestCode/);
+  assert.match(src, /window\.vcomStartGuestCall/);
+  const render = src.match(/function render\(\) \{[\s\S]*?\n    function /);
+  assert.ok(render);
+  assert.equal(render[0].includes("vcomStartGuestCall(code"), false);
 });
 
 test("vcomGuestCode matches only the exact guest temp phone", function () {
@@ -209,12 +208,10 @@ test("placeLinkCall does not steal a real subscriber call already in progress", 
   assert.deepEqual(calls, []);
 });
 
-test("auto-start uses the keypad path only when the owner is idle", function () {
+test("owner does not auto-start from the drawer when a guest is ringing", function () {
   const w = loadLink();
-  assert.equal(w.vcomShouldAutoStartGuest({ status: "ringing", offer: null }, { fy: function () { return false; }, isOnCall: function () { return false; } }), true);
+  assert.equal(w.vcomShouldAutoStartGuest({ status: "ringing", offer: null }, { fy: function () { return false; }, isOnCall: function () { return false; } }), false);
   assert.equal(w.vcomShouldAutoStartGuest({ status: "ringing", offer: { sdp: "x" } }, { fy: function () { return false; }, isOnCall: function () { return false; } }), false);
-  assert.equal(w.vcomShouldAutoStartGuest({ status: "ringing" }, { fy: function () { return true; }, isOnCall: function () { return false; } }), false);
-  assert.equal(w.vcomShouldAutoStartGuest({ status: "waiting" }, { fy: function () { return false; }, isOnCall: function () { return false; } }), false);
 });
 
 test("קבל לינק חדש is emphasized, not faint caption gray", function () {
