@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid1";
+  window.__VCOM_LINK_BUILD = "vid2";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -200,6 +200,105 @@
   }
   window.vcomCallHasVideo = function (stream) {
     return !!(stream && stream.getVideoTracks && stream.getVideoTracks().length);
+  };
+  window.vcomMergeTrackStream = function (holder, event) {
+    holder = holder || {};
+    var incoming = event && event.streams && event.streams[0];
+    if (incoming) {
+      holder.stream = incoming;
+      return incoming;
+    }
+    if (!holder.stream) {
+      if (typeof MediaStream === "function") holder.stream = new MediaStream();
+      else holder.stream = {
+        _tracks: [],
+        addTrack: function (track) { this._tracks.push(track); },
+        getTracks: function () { return this._tracks.slice(); },
+        getVideoTracks: function () {
+          return this._tracks.filter(function (track) { return track.kind === "video"; });
+        },
+        getAudioTracks: function () {
+          return this._tracks.filter(function (track) { return track.kind === "audio"; });
+        }
+      };
+    }
+    if (event && event.track) {
+      try { holder.stream.addTrack(event.track); } catch (eAdd) {}
+    }
+    return holder.stream;
+  };
+  window.vcomVideoIsLocal = function (el) {
+    if (!el) return false;
+    if (el.id === "vcom-guest-local-video") return true;
+    if (el.getAttribute && el.getAttribute("data-vcom-local") === "1") return true;
+    if (el.getAttribute && el.getAttribute("data-local") != null) return true;
+    return false;
+  };
+  window.vcomAttachCallVideo = function (el, stream, kind) {
+    if (!el || !window.vcomCallHasVideo(stream)) return { ok: false, reason: "no-video" };
+    if (kind !== "local" && kind !== "remote") kind = window.vcomVideoIsLocal(el) ? "local" : "remote";
+    el.srcObject = stream;
+    el.autoplay = true;
+    el.muted = true;
+    el.playsInline = true;
+    el.hidden = false;
+    try { el.removeAttribute("hidden"); } catch (eHid) {}
+    try {
+      el.setAttribute("playsinline", "true");
+      el.setAttribute("webkit-playsinline", "true");
+      el.setAttribute("data-vcom-lifted", "1");
+    } catch (eAttr) {}
+    el.style.position = "fixed";
+    el.style.objectFit = "cover";
+    el.style.pointerEvents = "none";
+    el.style.background = "#111";
+    if (kind === "local") {
+      el.style.zIndex = "10021";
+      el.style.top = "calc(env(safe-area-inset-top, 0px) + 72px)";
+      el.style.left = "16px";
+      el.style.width = "112px";
+      el.style.height = "156px";
+      el.style.borderRadius = "16px";
+      el.style.transform = "scaleX(-1)";
+    } else {
+      el.style.zIndex = "10020";
+      el.style.top = "0";
+      el.style.left = "0";
+      el.style.width = "100%";
+      el.style.height = "100dvh";
+      el.style.borderRadius = "0";
+      el.style.transform = "";
+    }
+    var play = el.play && el.play();
+    if (play && play.catch) play.catch(function () {});
+    return { ok: true, kind: kind };
+  };
+  window.vcomHideLiftedVideo = function (el) {
+    if (!el) return;
+    el.hidden = true;
+    try { el.setAttribute("hidden", "true"); } catch (eHid) {}
+    el.style.zIndex = "0";
+    el.style.width = "0";
+    el.style.height = "0";
+  };
+  window.vcomLiftCallVideos = function () {
+    var nodes = document.querySelectorAll('video[id^="video_"], #vcom-guest-remote-video, #vcom-guest-local-video, #vcom-guest video[data-remote], #vcom-guest video[data-local]');
+    var shown = 0;
+    for (var i = 0; i < nodes.length; i++) {
+      var video = nodes[i];
+      var stream = video.srcObject;
+      if (!window.vcomCallHasVideo(stream)) {
+        if (video.getAttribute && video.getAttribute("data-vcom-lifted") === "1") window.vcomHideLiftedVideo(video);
+        continue;
+      }
+      var local = window.vcomVideoIsLocal(video);
+      if (video.parentElement !== document.body) {
+        try { document.body.appendChild(video); } catch (eMove) {}
+      }
+      window.vcomAttachCallVideo(video, stream, local ? "local" : "remote");
+      shown += 1;
+    }
+    return { ok: true, shown: shown };
   };
   window.vcomOpenCallMedia = function (wantVideo) {
     var devices = navigator.mediaDevices;
@@ -588,9 +687,14 @@
       });
     });
   }
-  function bootChrome() {
+    function bootChrome() {
     wireMediaPersist();
     window.vcomApplyPwaLayout();
+    if (!window.__vcomLiftTimer) {
+      window.__vcomLiftTimer = setInterval(function () {
+        if (window.vcomLiftCallVideos) window.vcomLiftCallVideos();
+      }, 800);
+    }
     wireUpdateBar();
     wireApproval();
     wireSignupLanding();
@@ -1195,12 +1299,13 @@
       if (play && play.catch) play.catch(function () {});
     }
     pc.ontrack = function (event) {
-      var stream = event.streams[0];
+      var stream = window.vcomMergeTrackStream(state, event);
       remote.srcObject = stream;
       if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
       window.vcomApplyCallAudioRoute(remote);
       var play = remote.play();
       if (play && play.catch) play.catch(function () {});
+      window.vcomAttachCallVideo(nodes.remoteVideo, stream, "remote");
       showGuestVideo(nodes.remoteVideo, stream);
     };
     var wasConnected = false;
@@ -1226,6 +1331,7 @@
       if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
       try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (e) {}
       if (window.vcomRouteOutputs) window.vcomRouteOutputs();
+      window.vcomAttachCallVideo(nodes.localVideo, stream, "local");
       showGuestVideo(nodes.localVideo, stream);
       stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
       return pc.setRemoteDescription(data.offer);
@@ -1840,7 +1946,7 @@
       fs.updateDoc(ref, { callerCandidates: fs.arrayUnion(item) }).catch(function () {});
     };
     pc.ontrack = function (event) {
-      var stream = event.streams[0];
+      var stream = window.vcomMergeTrackStream(current, event);
       stopBack();
       var audio = document.getElementById("vcom-guest-caller");
       if (audio) {
@@ -1850,14 +1956,8 @@
         var play = audio.play();
         if (play && play.catch) play.catch(function () {});
       }
-      var remoteVideo = document.getElementById("vcom-guest-remote-video");
-      if (remoteVideo && stream && stream.getVideoTracks && stream.getVideoTracks().length) {
-        remoteVideo.srcObject = stream;
-        remoteVideo.muted = true;
-        remoteVideo.hidden = false;
-        var showRemote = remoteVideo.play();
-        if (showRemote && showRemote.catch) showRemote.catch(function () {});
-      }
+      window.vcomAttachCallVideo(document.getElementById("vcom-guest-remote-video"), stream, "remote");
+      if (window.vcomLiftCallVideos) window.vcomLiftCallVideos();
       if (window.vcomRouteOutputs) window.vcomRouteOutputs();
     };
     function markConnected() {
@@ -1935,14 +2035,8 @@
       current.video = window.vcomCallHasVideo(stream);
       window.__vcomGuestVideo = !!current.video;
       if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
-      var localVideo = document.getElementById("vcom-guest-local-video");
-      if (localVideo && stream.getVideoTracks && stream.getVideoTracks().length) {
-        localVideo.srcObject = stream;
-        localVideo.muted = true;
-        localVideo.hidden = false;
-        var showLocal = localVideo.play();
-        if (showLocal && showLocal.catch) showLocal.catch(function () {});
-      }
+      window.vcomAttachCallVideo(document.getElementById("vcom-guest-local-video"), stream, "local");
+      if (window.vcomLiftCallVideos) window.vcomLiftCallVideos();
       stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
       startBack();
       return pc.createOffer();
@@ -1992,8 +2086,8 @@
       + ".vcom-link-copy{display:block;width:100%;box-sizing:border-box;min-height:44px;margin-top:8px;border:0;border-radius:12px;background:#007AFF;color:#fff;padding:0 12px;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-phone{display:block;width:100%;margin-top:8px;font-size:22px;font-weight:700;letter-spacing:.4px;direction:ltr;unicode-bidi:isolate;text-align:right;white-space:nowrap;touch-action:manipulation}"
       + ".vcom-link-meta{display:block;margin-top:4px;color:#007AFF;font-size:14px;font-weight:600;text-align:right}"
-      + "#vcom-guest-remote-video{position:fixed;left:0;top:0;width:100%;height:calc(100dvh - 200px);object-fit:cover;z-index:35;background:#111;pointer-events:none}"
-      + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 72px);left:16px;width:112px;height:156px;object-fit:cover;border-radius:16px;z-index:36;background:#222;transform:scaleX(-1);pointer-events:none}"
+      + "#vcom-guest-remote-video{position:fixed;left:0;top:0;width:100%;height:100dvh;object-fit:cover;z-index:10020;background:#111;pointer-events:none}"
+      + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 72px);left:16px;width:112px;height:156px;object-fit:cover;border-radius:16px;z-index:10021;background:#222;transform:scaleX(-1);pointer-events:none}"
       + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}";
   }
   function guestCss() {
@@ -2042,7 +2136,7 @@
   function guestHtml() {
     return ''
       + '<section class="guest-wait" data-view="wait"><img src="/icons/vcom-splash.png?v=call11" alt="VCOM"><h1>VCOM</h1><p>המתן לשיחה</p></section>'
-      + '<section class="guest-call" data-view="call" hidden><div class="guest-stage" data-stage hidden><video data-remote autoplay playsinline></video><video data-local autoplay playsinline muted></video></div><header class="guest-logo" aria-label="VCOM"><span class="com">COM</span><span class="v">V</span></header><div class="guest-mid"><h2 data-name></h2><p data-status>שיחה נכנסת</p><p data-timer hidden>0:00</p></div>'
+      + '<section class="guest-call" data-view="call" hidden><div class="guest-stage" data-stage hidden><video id="vcom-guest-remote-video" data-remote autoplay playsinline></video><video id="vcom-guest-local-video" data-local autoplay playsinline muted></video></div><header class="guest-logo" aria-label="VCOM"><span class="com">COM</span><span class="v">V</span></header><div class="guest-mid"><h2 data-name></h2><p data-status>שיחה נכנסת</p><p data-timer hidden>0:00</p></div>'
       + '<div class="guest-controls"><button type="button" class="tool" data-speaker hidden>רמקול</button><button type="button" class="answer" data-answer>ענה</button><button type="button" class="hang" data-decline>דחה</button><button type="button" class="hang" data-hang hidden>נתק</button><button type="button" class="tool" data-mute hidden>השתק</button></div></section>'
       + '<section class="guest-dead" data-view="dead" hidden><header class="guest-logo" aria-label="VCOM"><span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></header><p class="guest-expired" data-expired>לינק שיחה פג תוקף</p><p data-dead hidden></p><button type="button" class="guest-join" data-join><span class="guest-join-title" dir="rtl">עדיין אין לך <span class="guest-join-brand">מנוי&nbsp;<span class="vcom-word" dir="ltr"><span class="v">V</span><span class="com">COM</span></span></span></span><span class="guest-join-cta"><img class="guest-join-handset" src="/icons/vcom-splash.png?v=call11" alt=""><span class="guest-join-sub" dir="rtl">לחץ כאן להגשת בקשה</span></span></button></section>';
   }

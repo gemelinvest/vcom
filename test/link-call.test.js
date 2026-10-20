@@ -290,3 +290,113 @@ test("installed browser app uses a full-viewport PWA layout", function () {
   w.vcomApplyPwaLayout();
   assert.equal(w.__vcomPwa, true);
 });
+
+test("answered video is attached above the Flutter canvas so both sides can see it", function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomAttachCallVideo, "function");
+  const el = {
+    style: {},
+    hidden: true,
+    srcObject: null,
+    setAttribute: function () {},
+    removeAttribute: function () {},
+    play: function () { return Promise.resolve(); }
+  };
+  const stream = { getVideoTracks: function () { return [{ kind: "video" }]; } };
+  const remote = w.vcomAttachCallVideo(el, stream, "remote");
+  assert.equal(remote.ok, true);
+  assert.equal(el.hidden, false);
+  assert.equal(Number(el.style.zIndex) >= 10020, true);
+  assert.equal(el.srcObject, stream);
+  const localEl = {
+    style: {},
+    hidden: true,
+    srcObject: null,
+    setAttribute: function () {},
+    removeAttribute: function () {},
+    play: function () { return Promise.resolve(); }
+  };
+  const local = w.vcomAttachCallVideo(localEl, stream, "local");
+  assert.equal(local.ok, true);
+  assert.equal(Number(localEl.style.zIndex) >= 10021, true);
+});
+
+test("remote picture still attaches when WebRTC delivers a track without streams", function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomMergeTrackStream, "function");
+  const holder = {};
+  const track = { kind: "video", id: "v1" };
+  const stream = w.vcomMergeTrackStream(holder, { track: track, streams: [] });
+  assert.ok(stream);
+  assert.equal(w.vcomCallHasVideo(stream), true);
+});
+
+test("owner and guest ontrack attach video through vcomAttachCallVideo", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /pc\.ontrack = function[\s\S]*vcomAttachCallVideo/);
+  assert.match(src, /vcomMergeTrackStream/);
+  assert.match(src, /z-index:10020/);
+  assert.match(src, /vcomAttachCallVideo\(nodes\.localVideo, stream, "local"\)/);
+});
+
+test("vcomLiftCallVideos lifts remote Flutter video above the canvas", function () {
+  const w = loadLink();
+  const body = w.document.body;
+  const moved = [];
+  body.appendChild = function (node) {
+    node.parentElement = body;
+    moved.push(node);
+    return node;
+  };
+  const remote = {
+    id: "video_RTCVideoRenderer-remote",
+    srcObject: { getVideoTracks: function () { return [{ kind: "video" }]; } },
+    style: {},
+    hidden: false,
+    parentElement: { tagName: "FLT-PLATFORM-VIEW" },
+    attrs: {},
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    removeAttribute: function (name) { delete this.attrs[name]; },
+    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+    play: function () { return Promise.resolve(); }
+  };
+  const local = {
+    id: "video_RTCVideoRenderer-local",
+    srcObject: { getVideoTracks: function () { return [{ kind: "video" }]; } },
+    style: {},
+    hidden: false,
+    parentElement: { tagName: "FLT-PLATFORM-VIEW" },
+    attrs: { "data-vcom-local": "1" },
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    removeAttribute: function (name) { delete this.attrs[name]; },
+    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+    play: function () { return Promise.resolve(); }
+  };
+  w.document.querySelectorAll = function () { return [remote, local]; };
+  const result = w.vcomLiftCallVideos();
+  assert.equal(result.shown, 2);
+  assert.equal(remote.parentElement, body);
+  assert.equal(local.parentElement, body);
+  assert.equal(Number(remote.style.zIndex) >= 10020, true);
+  assert.equal(Number(local.style.zIndex) >= 10021, true);
+  assert.equal(moved.length, 2);
+});
+
+test("ended call videos are hidden so they do not cover the app", function () {
+  const w = loadLink();
+  const el = {
+    id: "video_RTCVideoRenderer-done",
+    srcObject: null,
+    style: { zIndex: "10020", width: "100%", height: "100dvh" },
+    hidden: false,
+    parentElement: {},
+    attrs: { "data-vcom-lifted": "1" },
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; }
+  };
+  w.document.querySelectorAll = function () { return [el]; };
+  const result = w.vcomLiftCallVideos();
+  assert.equal(result.shown, 0);
+  assert.equal(el.hidden, true);
+  assert.equal(el.style.zIndex, "0");
+});
