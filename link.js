@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "stuck1";
+  window.__VCOM_LINK_BUILD = "vid1";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -198,6 +198,41 @@
     };
     try { localStorage.setItem(MEDIA_KEY, JSON.stringify(next)); } catch (e) {}
   }
+  window.vcomCallHasVideo = function (stream) {
+    return !!(stream && stream.getVideoTracks && stream.getVideoTracks().length);
+  };
+  window.vcomOpenCallMedia = function (wantVideo) {
+    var devices = navigator.mediaDevices;
+    if (!devices || !devices.getUserMedia) return Promise.reject(new Error("no-media"));
+    var gum = function (spec) { return devices.getUserMedia(spec); };
+    var audio = { echoCancellation: true, noiseSuppression: true };
+    if (!wantVideo) return gum({ audio: audio, video: false });
+    return gum({ audio: audio, video: { facingMode: "user" } }).catch(function () {
+      return gum({ audio: audio, video: true });
+    }).catch(function () {
+      return gum({ audio: true, video: true });
+    }).catch(function () {
+      return gum({ audio: audio, video: false });
+    });
+  };
+  window.vcomApplyPwaLayout = function () {
+    var standalone = false;
+    try {
+      standalone = !!(navigator.standalone);
+      if (!standalone && window.matchMedia) standalone = !!window.matchMedia("(display-mode: standalone)").matches;
+    } catch (ePwa) {}
+    window.__vcomPwa = !!standalone;
+    try {
+      if (standalone) document.documentElement.classList.add("vcom-pwa");
+      else document.documentElement.classList.remove("vcom-pwa");
+    } catch (eClass) {}
+    if (document.getElementById("vcom-pwa-skin")) return;
+    var skin = document.createElement("style");
+    skin.id = "vcom-pwa-skin";
+    skin.textContent = "html.vcom-pwa,html.vcom-pwa body{height:100dvh;min-height:100dvh;min-height:-webkit-fill-available}html.vcom-pwa flt-glass-pane,html.vcom-pwa flutter-view{height:100%!important;min-height:100%}";
+    document.head.appendChild(skin);
+  };
+  try { window.addEventListener("pageshow", function () { window.vcomApplyPwaLayout(); }); } catch (eShow) {}
   function isOnCall() {
     try {
       var bloc = window.__vcomBloc;
@@ -555,6 +590,7 @@
   }
   function bootChrome() {
     wireMediaPersist();
+    window.vcomApplyPwaLayout();
     wireUpdateBar();
     wireApproval();
     wireSignupLanding();
@@ -1041,13 +1077,7 @@
           unlockRing();
           window.vcomStopRing();
           var wantVideo = data.video === true;
-          var audioAsk = { echoCancellation: true, noiseSuppression: true };
-          var media = navigator.mediaDevices.getUserMedia({
-            audio: audioAsk,
-            video: wantVideo ? { facingMode: "user" } : false
-          }).catch(function () {
-            return navigator.mediaDevices.getUserMedia({ audio: audioAsk, video: false });
-          });
+          var media = window.vcomOpenCallMedia(wantVideo);
           if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
           session = openAnswer(fs, db, ref, data, media, remote, nodes);
           markLive();
@@ -1718,11 +1748,7 @@
       window.__vcomGuestActive = code;
       var wantVideo = !!video;
       window.__vcomGuestVideo = wantVideo;
-      var audioAsk = { echoCancellation: true, noiseSuppression: true };
-      var media = navigator.mediaDevices.getUserMedia({
-        audio: audioAsk,
-        video: wantVideo ? { facingMode: "user" } : false
-      });
+      var media = window.vcomOpenCallMedia(wantVideo);
       startCaller(token, code, media, wantVideo);
     };
     window.vcomEndGuestCall = function () {
@@ -1906,6 +1932,8 @@
         return null;
       }
       current.local = stream;
+      current.video = window.vcomCallHasVideo(stream);
+      window.__vcomGuestVideo = !!current.video;
       if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
       var localVideo = document.getElementById("vcom-guest-local-video");
       if (localVideo && stream.getVideoTracks && stream.getVideoTracks().length) {
