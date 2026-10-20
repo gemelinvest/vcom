@@ -238,3 +238,55 @@ test("startCaller retries locally if Firestore is not ready instead of dropping 
   assert.match(start[0], /setTimeout/);
   assert.equal(start[0].includes("enableNetwork"), false);
 });
+
+test("video call media falls back to a simpler camera instead of dropping the dial", async function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomOpenCallMedia, "function");
+  const calls = [];
+  w.navigator.mediaDevices.getUserMedia = function (spec) {
+    calls.push(spec && spec.video);
+    if (spec && spec.video && spec.video.facingMode) return Promise.reject(new Error("overconstrained"));
+    if (spec && spec.video === true) {
+      return Promise.resolve({
+        getTracks: function () { return [{ kind: "video", stop: function () {} }]; },
+        getAudioTracks: function () { return [{}]; },
+        getVideoTracks: function () { return [{}]; }
+      });
+    }
+    return Promise.reject(new Error("fail"));
+  };
+  const stream = await w.vcomOpenCallMedia(true);
+  assert.equal(w.vcomCallHasVideo(stream), true);
+  assert.equal(calls[0] && calls[0].facingMode, "user");
+  assert.equal(calls.indexOf(true) >= 0, true);
+});
+
+test("video dial still sends a call if the camera is refused", async function () {
+  const w = loadLink();
+  w.navigator.mediaDevices.getUserMedia = function (spec) {
+    if (spec && spec.video) return Promise.reject(new Error("notallowed"));
+    return Promise.resolve({
+      getTracks: function () { return [{ kind: "audio", stop: function () {} }]; },
+      getAudioTracks: function () { return [{}]; },
+      getVideoTracks: function () { return []; }
+    });
+  };
+  const stream = await w.vcomOpenCallMedia(true);
+  assert.equal(w.vcomCallHasVideo(stream), false);
+  assert.equal(stream.getAudioTracks().length, 1);
+});
+
+test("owner and guest video paths open media through vcomOpenCallMedia", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /vcomStartGuestCall = function[\s\S]{0,500}vcomOpenCallMedia\(wantVideo\)/);
+  assert.match(src, /current\.video = window\.vcomCallHasVideo\(stream\)/);
+  assert.match(src, /vcomOpenCallMedia\(wantVideo\)/);
+});
+
+test("installed browser app uses a full-viewport PWA layout", function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomApplyPwaLayout, "function");
+  w.navigator.standalone = true;
+  w.vcomApplyPwaLayout();
+  assert.equal(w.__vcomPwa, true);
+});
