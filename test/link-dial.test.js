@@ -120,10 +120,15 @@ test("vcomGuestCode does not hijack another subscriber number", function () {
   assert.equal(w.vcomGuestCode(""), "");
 });
 
-test("ended guest links are not dialable via vcomGuestCode", function () {
+test("ended guest links stay off the side menu but remain keypad-dialable until expiry", function () {
   const w = loadLink();
+  const now = Date.now();
   w.__vcomGuestBook = guestBook();
   w.__vcomGuestBook["020578412"].status = "ended";
+  w.__vcomGuestBook["020578412"].expiresAt = now + 600000;
+  assert.equal(w.vcomLinkStillVisible(w.__vcomGuestBook["020578412"], now), false);
+  assert.equal(w.vcomGuestCode("020578412"), "Ab3dEf");
+  w.__vcomGuestBook["020578412"].expiresAt = now - 1000;
   assert.equal(w.vcomGuestCode("020578412"), "");
 });
 
@@ -226,4 +231,20 @@ test("guest name on the link card is not clipped", function () {
   const src = fs.readFileSync(LINK, "utf8");
   assert.match(src, /\.vcom-link-guest\{[^}]*overflow:visible/);
   assert.match(src, /\.vcom-link-guest\{[^}]*unicode-bidi:isolate/);
+});
+
+test("ended-but-unexpired guest numbers still use guest WebRTC, not subscriber lookup", function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomGuestStillDialable, "function");
+  const now = Date.now();
+  const endedLive = {
+    code: "Ab3dEf",
+    phone: "020578412",
+    status: "ended",
+    expiresAt: now + 600000
+  };
+  assert.equal(w.vcomGuestStillDialable(endedLive, now), true);
+  assert.equal(w.vcomLinkStillVisible(endedLive, now), false);
+  const expired = Object.assign({}, endedLive, { expiresAt: now - 1 });
+  assert.equal(w.vcomGuestStillDialable(expired, now), false);
 });

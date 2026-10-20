@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "ear4";
+  window.__VCOM_LINK_BUILD = "stuck1";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -255,25 +255,10 @@
     if (!devices || !devices.getUserMedia || devices.getUserMedia.__vcomPersist) return;
     var raw = devices.getUserMedia.bind(devices);
     devices.getUserMedia = function (constraints) {
-      var askedVideo = !!(constraints && constraints.video);
-      var askedAudio = !!(constraints && constraints.audio);
-      var mem = mediaGranted();
-      var run = function (spec) {
-        return raw(spec).then(function (stream) {
-          rememberMedia(stream);
-          return stream;
-        });
-      };
-      var canPrime = askedAudio && (!mem.audio || (askedVideo && !mem.video));
-      var gestured = !navigator.userActivation || navigator.userActivation.isActive;
-      if (canPrime && gestured && !mem.video) {
-        return run({ audio: constraints.audio, video: { facingMode: "user" } }).then(function (stream) {
-          rememberMedia(stream);
-          try { stream.getTracks().forEach(function (track) { track.stop(); }); } catch (e) {}
-          return run(constraints);
-        }).catch(function () { return run(constraints); });
-      }
-      return run(constraints);
+      return raw(constraints).then(function (stream) {
+        rememberMedia(stream);
+        return stream;
+      });
     };
     devices.getUserMedia.__vcomPersist = true;
     if (navigator.permissions && navigator.permissions.query && !navigator.permissions.query.__vcomPersist) {
@@ -593,6 +578,24 @@
     return true;
   };
 
+  window.vcomGuestStillDialable = function (row, now) {
+    now = now == null ? Date.now() : now;
+    if (!row || !row.code) return false;
+    var exp = asMillis(row.expiresAt);
+    if (exp && exp <= now && row.status !== "active") return false;
+    return true;
+  };
+
+  window.vcomIgnoreStaleEnded = function (data, offerSent) {
+    if (offerSent) return false;
+    return !data || data.status === "ended";
+  };
+
+  window.vcomGuestResumeFromEnded = function (data, endingVisit) {
+    if (!endingVisit || !data || !data.offer) return false;
+    return data.status === "ringing" || data.status === "waiting";
+  };
+
   window.vcomGuestCode = function (phone) {
     var key = digits(phone);
     var raw = String(phone || "").replace(/^\s+|\s+$/g, "").toLowerCase();
@@ -601,7 +604,7 @@
     var book = window.__vcomGuestBook || {};
     if (!key) return "";
     var row = book[key];
-    if (window.vcomLinkStillVisible(row)) return row.code;
+    if (window.vcomGuestStillDialable(row)) return row.code;
     return "";
   };
 
@@ -1003,6 +1006,15 @@
         fs.onSnapshot(ref, function (snap) {
           var data = snap.exists() ? snap.data() || {} : null;
           window.__vcomGuestData = data;
+          if (window.vcomGuestResumeFromEnded(data, endingVisit)) {
+            endingVisit = false;
+            if (session) {
+              try { session.close(); } catch (eClose) {}
+            }
+            session = null;
+            paint(data);
+            return;
+          }
           if (data && data.status === "waiting" && !data.offer && !markedReady && fs.updateDoc) {
             markedReady = true;
             fs.updateDoc(ref, { status: "ringing" }).catch(function () {});
@@ -1737,6 +1749,10 @@
     caller = null;
     if (!current) return;
     current.closed = true;
+    if (current.unsub) {
+      try { current.unsub(); } catch (eUn) {}
+      current.unsub = null;
+    }
     try { current.pc.close(); } catch (e) {}
     if (current.local) current.local.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
     current.local = null;
@@ -1769,11 +1785,23 @@
   }
   function startCaller(token, code, mediaPromise, video) {
     var fs = window.firebase_firestore;
-    if (!fs) return;
+    if (!fs) {
+      startCaller._wait = (startCaller._wait || 0) + 1;
+      if (startCaller._wait > 20) {
+        startCaller._wait = 0;
+        return;
+      }
+      setTimeout(function () {
+        if (token !== window.__vcomGuestToken) return;
+        startCaller(token, code, mediaPromise, video);
+      }, 250);
+      return;
+    }
+    startCaller._wait = 0;
     finishCaller(false);
     var pc = new RTCPeerConnection(ICE);
     var ref = fs.doc(fs.getFirestore(), "guestLinks", code);
-    caller = { pc: pc, fs: fs, ref: ref, code: code, local: null, closed: false, seen: {}, queued: [], remoteSet: false, answerSeen: false, markedLive: false, video: !!video };
+    caller = { pc: pc, fs: fs, ref: ref, code: code, local: null, closed: false, seen: {}, queued: [], remoteSet: false, answerSeen: false, markedLive: false, offerSent: false, unsub: null, video: !!video };
     var current = caller;
     if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
     pc.onicecandidate = function (event) {
@@ -1823,9 +1851,10 @@
       if (current.closed || token !== window.__vcomGuestToken) return;
       if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") markConnected();
     };
-    fs.onSnapshot(ref, function (snap) {
+    current.unsub = fs.onSnapshot(ref, function (snap) {
       if (current.closed || token !== window.__vcomGuestToken) return;
       var data = snap.exists() ? snap.data() || {} : null;
+      if (window.vcomIgnoreStaleEnded(data, current.offerSent)) return;
       if (!data || data.status === "ended") {
         window.vcomOnHangup({
           stopRingback: stopBack,
@@ -1897,7 +1926,9 @@
       var row = findRow(code);
       if (row && row.expiresAt <= Date.now() && row.status !== "active") throw new Error("expired");
       var patch = { status: "ringing", offer: { type: offer.type, sdp: offer.sdp }, video: !!current.video };
-      return fs.updateDoc(ref, patch);
+      return fs.updateDoc(ref, patch).then(function () {
+        current.offerSent = true;
+      });
     }).catch(function (err) {
       window.__vcomGuestErr = String(err && (err.code || err.message) || err);
       if (token !== window.__vcomGuestToken) return;

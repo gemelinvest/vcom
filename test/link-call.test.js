@@ -195,3 +195,46 @@ test("hangup from either side writes ended and closes both UIs", function () {
   assert.equal(result.patch.status, "ended");
   assert.deepEqual(calls, ["stop-ringback", "close-local", "phase:ended", "write:ended"]);
 });
+
+test("a new dial ignores a leftover ended snapshot until the offer is written", function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomIgnoreStaleEnded, "function");
+  assert.equal(w.vcomIgnoreStaleEnded({ status: "ended" }, false), true);
+  assert.equal(w.vcomIgnoreStaleEnded(null, false), true);
+  assert.equal(w.vcomIgnoreStaleEnded({ status: "ended" }, true), false);
+  assert.equal(w.vcomIgnoreStaleEnded({ status: "ringing", offer: { sdp: "x" } }, false), false);
+  assert.equal(w.vcomIgnoreStaleEnded({ status: "active" }, true), false);
+});
+
+test("guest page reopens a later ringing offer after the previous call ended", function () {
+  const w = loadLink();
+  assert.equal(typeof w.vcomGuestResumeFromEnded, "function");
+  assert.equal(w.vcomGuestResumeFromEnded({ status: "ringing", offer: { sdp: "x" } }, true), true);
+  assert.equal(w.vcomGuestResumeFromEnded({ status: "waiting", offer: { sdp: "x" } }, true), true);
+  assert.equal(w.vcomGuestResumeFromEnded({ status: "ended", offer: { sdp: "x" } }, true), false);
+  assert.equal(w.vcomGuestResumeFromEnded({ status: "ringing" }, true), false);
+  assert.equal(w.vcomGuestResumeFromEnded({ status: "ringing", offer: { sdp: "x" } }, false), false);
+});
+
+test("caller snapshot is unsubscribed on hangup so redial does not leak listeners", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /current\.unsub = fs\.onSnapshot\(ref/);
+  assert.match(src, /if \(current\.unsub\) \{[\s\S]{0,120}current\.unsub\(\)/);
+});
+
+test("audio-only getUserMedia does not prime the camera", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  const persist = src.match(/function wireMediaPersist\(\) \{[\s\S]*?\n  \}/);
+  assert.ok(persist, "wireMediaPersist exists");
+  assert.equal(persist[0].includes("facingMode"), false);
+  assert.equal(persist[0].includes("video: {"), false);
+});
+
+test("startCaller retries locally if Firestore is not ready instead of dropping the dial", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  const start = src.match(/function startCaller\(token, code, mediaPromise, video\) \{[\s\S]*?finishCaller\(false\)/);
+  assert.ok(start, "startCaller exists");
+  assert.match(start[0], /if \(!fs\) \{/);
+  assert.match(start[0], /setTimeout/);
+  assert.equal(start[0].includes("enableNetwork"), false);
+});
