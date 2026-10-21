@@ -164,6 +164,87 @@ test("earpiece is a route change, not a quieter speaker", function () {
   assert.equal(el.volume, 1);
 });
 
+test("a regular audio call stays on the earpiece when the other side answers", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid8"'), true);
+  const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
+  assert.ok(apply, "earpiece apply exists");
+  assert.equal(apply[0].includes(".muted"), false);
+  assert.match(src, /addEventListener\("play", onCallMedia, true\)/);
+  assert.match(src, /addEventListener\("playing", onCallMedia, true\)/);
+  const w = loadLink();
+  const sinks = [];
+  const session = { type: "playback" };
+  w.navigator.audioSession = session;
+  w.__vcomSpeaker = true;
+  w.__vcomSpeakerTouched = true;
+  w.__vcomUserSpeaker = false;
+  w.__vcomRinging = false;
+  w.__vcomGuestVideo = false;
+  const remote = {
+    id: "audio_RTCVideoRenderer-1",
+    tagName: "AUDIO",
+    srcObject: {
+      getAudioTracks: function () { return [{ readyState: "live" }]; },
+      getVideoTracks: function () { return []; }
+    },
+    setSinkId: function (id) {
+      sinks.push(id);
+      this.sinkId = id;
+      return Promise.resolve();
+    }
+  };
+  w.document.querySelectorAll = function () { return [remote]; };
+  assert.equal(w.vcomAudioCallWantsEarpiece(), true);
+  assert.equal(w.vcomHoldEarpiece(remote), "earpiece");
+  assert.equal(session.type, "play-and-record");
+  assert.equal(w.__vcomSpeaker, false);
+  assert.equal(sinks.indexOf("communications") >= 0, true);
+  w.vcomSetSpeaker(true);
+  assert.equal(w.__vcomUserSpeaker, true);
+  assert.equal(session.type, "auto");
+  session.type = "play-and-record";
+  assert.equal(w.vcomHoldEarpiece(remote), "skip");
+  assert.equal(session.type, "play-and-record");
+  w.__vcomUserSpeaker = false;
+  w.__vcomGuestVideo = true;
+  assert.equal(w.vcomAudioCallWantsEarpiece(), false);
+  w.__vcomGuestVideo = false;
+  w.__vcomRinging = true;
+  assert.equal(w.vcomAudioCallWantsEarpiece(), false);
+  w.__vcomRinging = false;
+  w.__vcomSpeakerTouched = true;
+  w.__vcomSpeaker = true;
+  w.vcomSetEarpieceDefault();
+  assert.equal(w.__vcomSpeakerTouched, false);
+  assert.equal(session.type, "play-and-record");
+});
+
+test("answering or a new audio capture clears a leftover loudspeaker latch", async function () {
+  const w = loadLink();
+  w.__vcomUserSpeaker = true;
+  w.__vcomSpeaker = true;
+  w.__vcomSpeakerTouched = true;
+  w.navigator.audioSession = { type: "auto" };
+  w.vcomStopRing();
+  assert.equal(w.__vcomUserSpeaker, true);
+  w.__vcomUserSpeaker = false;
+  w.__vcomSpeaker = true;
+  w.__vcomSpeakerTouched = true;
+  const stream = await w.navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  assert.equal(w.vcomCallHasVideo(stream), false);
+  assert.equal(w.__vcomUserSpeaker, false);
+  assert.equal(w.__vcomSpeaker, false);
+  assert.equal(w.__vcomSpeakerTouched, false);
+  assert.equal(w.navigator.audioSession.type, "play-and-record");
+  const answered = w.vcomOnRemoteAnswer({
+    stopRingback: function () {},
+    setCallPhase: function () {}
+  });
+  assert.equal(answered.phase, "connecting");
+  assert.equal(w.navigator.audioSession.type, "play-and-record");
+});
+
 test("Android earpiece sink prefers receiver, never default speaker", function () {
   const w = loadLink();
   assert.equal(w.vcomPickAudioSink([
