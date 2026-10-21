@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid4";
+  window.__VCOM_LINK_BUILD = "vid5";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -269,9 +269,13 @@
     var skin = document.createElement("style");
     skin.id = "vcom-video-skin";
     skin.textContent = ""
-      + "[data-vcom-kind=remote]{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10020!important;background:#000!important;pointer-events:none!important;transform:translateZ(0)!important}"
-      + "[data-vcom-kind=local]{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10021!important;background:#111!important;pointer-events:none!important;transform:scaleX(-1)!important;overflow:hidden!important}"
-      + "[data-vcom-kind][hidden]{display:none!important;width:0!important;height:0!important}";
+      + "video[id^=\"video_\"].vcom-slot-fit{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;margin:0!important;object-fit:cover!important;object-position:center center!important;background:#000!important;border:0!important;border-radius:0!important;opacity:1!important;z-index:auto!important;pointer-events:none!important;transform-origin:center center!important}"
+      + "video[id^=\"video_\"].vcom-slot-fit[data-vcom-local=\"1\"]{transform:scaleX(-1)!important}"
+      + "video[id^=\"video_\"].vcom-slot-fit:not([data-vcom-local=\"1\"]){transform:none!important}"
+      + "flt-platform-view:has(video.vcom-slot-fit){overflow:hidden!important}"
+      + "#vcom-guest-remote-video,#vcom-stage-remote{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10020!important;background:#000!important;pointer-events:none!important}"
+      + "#vcom-guest-local-video,#vcom-stage-local{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10021!important;background:#111!important;pointer-events:none!important;transform:scaleX(-1)!important}"
+      + "[data-vcom-kind][hidden],video[id^=\"video_\"][hidden]{display:none!important}";
     try { document.head.appendChild(skin); } catch (eSkin) {}
   }
   function dockInsets() {
@@ -288,35 +292,6 @@
     var n = Number(value);
     if (!isFinite(n)) return 0;
     return Math.round(n / 2) * 2;
-  }
-  function readRect(node) {
-    if (!node || !node.getBoundingClientRect) return null;
-    try {
-      var rect = node.getBoundingClientRect();
-      if (!rect || rect.width < 24 || rect.height < 24) return null;
-      return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
-    } catch (eRect) { return null; }
-  }
-  function viewRect(video, kind) {
-    if (!video) return null;
-    var node = video;
-    var parent = video.parentElement;
-    if (parent && /platform-view/i.test(String(parent.tagName || ""))) node = parent;
-    if (kind === "local") {
-      var walk = node;
-      var best = null;
-      var vw = window.innerWidth || 0;
-      var vh = window.innerHeight || 0;
-      for (var i = 0; i < 5 && walk; i++) {
-        var rect = readRect(walk);
-        if (rect && (!vw || rect.width <= vw * 0.62) && (!vh || rect.height <= vh * 0.7)) {
-          if (!best || rect.width * rect.height >= best.width * best.height) best = rect;
-        }
-        walk = walk.parentElement;
-      }
-      if (best) return best;
-    }
-    return readRect(node);
   }
   function placeCallVideo(el, kind, rect) {
     if (!el) return false;
@@ -388,20 +363,16 @@
     el.style.transform = kind === "local" ? "scaleX(-1)" : "translateZ(0)";
     return true;
   }
-  function displayStream(stream) {
-    var tracks = stream.getVideoTracks();
-    var key = tracks.map(function (track) { return track && track.id; }).join("|");
-    var cache = window.__vcomDisplayStreams || (window.__vcomDisplayStreams = {});
-    if (cache[key]) return cache[key];
-    var copy = stream;
-    if (typeof MediaStream === "function") {
-      try { copy = new MediaStream(tracks); } catch (eCopy) { copy = stream; }
-    }
-    cache[key] = copy;
-    return copy;
-  }
   window.vcomAttachCallVideo = function (el, stream, kind, rect) {
     if (!el || !window.vcomCallHasVideo(stream)) return { ok: false, reason: "no-video" };
+    if (isFlutterVideo(el)) {
+      if (kind === "local") {
+        try { el.setAttribute("data-vcom-local", "1"); } catch (eLocal) {}
+      }
+      if (el.srcObject !== stream) el.srcObject = stream;
+      fitFlutterVideo(el);
+      return { ok: true, kind: videoIsLocalPreview(el) ? "local" : "remote", slot: true };
+    }
     if (kind !== "local" && kind !== "remote") kind = window.vcomVideoIsLocal(el) ? "local" : "remote";
     ensureVideoSkin();
     if (el.__vcomStream === stream && el.__vcomKind === kind && el.__vcomLifted && !el.hidden) {
@@ -440,120 +411,126 @@
     el.style.width = "0";
     el.style.height = "0";
   };
-  function fadeFlutterVideo(video) {
-    if (!video || !video.style || video.style.opacity === "0") return;
-    if (video.style.setProperty) {
+  function styleProp(el, prop, value) {
+    var camel = prop.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+    if (!el.style) el.style = {};
+    if (el.style.setProperty) {
+      try { el.style.setProperty(prop, value, "important"); } catch (eSet) {}
+    }
+    el.style[camel] = value;
+  }
+  function clearProp(el, prop) {
+    var camel = prop.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+    if (el.style && el.style.removeProperty) {
+      try { el.style.removeProperty(prop); } catch (eClear) {}
+    }
+    if (el.style) el.style[camel] = "";
+  }
+  function isFlutterVideo(video) {
+    return String(video && video.id || "").indexOf("video_") === 0;
+  }
+  function videoIsLocalPreview(video) {
+    if (!video || !video.getAttribute) return false;
+    if (video.getAttribute("data-vcom-local") === "1") return true;
+    if (video.getAttribute("data-vcom-kind") === "local") return true;
+    return video.id === "vcom-guest-local-video";
+  }
+  function platformViewOf(video) {
+    var node = video && video.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (String(node.tagName || "").toUpperCase() === "FLT-PLATFORM-VIEW") return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+  function emptyPlatformView() {
+    var views = [];
+    try { views = document.querySelectorAll("flt-platform-view"); } catch (eQ) { views = []; }
+    for (var i = 0; i < views.length; i++) {
+      var view = views[i];
+      if (!view || view === document.body) continue;
+      var occupied = false;
       try {
-        video.style.setProperty("opacity", "0", "important");
-        video.style.setProperty("pointer-events", "none", "important");
-      } catch (eFade) {}
-    }
-    video.style.opacity = "0";
-    video.style.pointerEvents = "none";
-  }
-  function videoArea(video) {
-    try {
-      var rect = video.getBoundingClientRect && video.getBoundingClientRect();
-      if (rect && rect.width && rect.height) return rect.width * rect.height;
-    } catch (eRect) {}
-    return 0;
-  }
-  function stageVideo(kind) {
-    var box = window.__vcomStageVideos || (window.__vcomStageVideos = {});
-    if (box[kind]) return box[kind];
-    var id = kind === "local" ? "vcom-stage-local" : "vcom-stage-remote";
-    var el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement("video");
-      el.id = id;
-      el.autoplay = true;
-      el.muted = true;
-      el.playsInline = true;
-      try { el.setAttribute("playsinline", "true"); } catch (eAttr) {}
-      el.hidden = true;
-      try { document.body.appendChild(el); } catch (eAdd) {}
-    }
-    box[kind] = el;
-    return el;
-  }
-  function classifyFlutterVideos(videos) {
-    var locals = [];
-    var remotes = [];
-    var unknown = [];
-    videos.forEach(function (video) {
-      var kind = video.__vcomKind === "local" || video.__vcomKind === "remote" ? video.__vcomKind : "";
-      if (!kind && window.vcomVideoIsLocal(video)) kind = "local";
-      else if (!kind && /remote/i.test(String(video.id || ""))) kind = "remote";
-      if (kind === "local") locals.push(video);
-      else if (kind === "remote") remotes.push(video);
-      else unknown.push(video);
-    });
-    if (unknown.length) {
-      unknown.sort(function (a, b) { return videoArea(b) - videoArea(a); });
-      if (!remotes.length && !locals.length && unknown.length === 1) {
-        if (window.vcomStreamIsLocal(unknown[0].srcObject) || !(window.__vcomLocalVideoIds && Object.keys(window.__vcomLocalVideoIds).length)) locals.push(unknown.pop());
-        else remotes.push(unknown.pop());
+        if (view.querySelector && view.querySelector("video")) occupied = true;
+      } catch (eHas) {}
+      if (!occupied && view.children && view.children.length) {
+        for (var c = 0; c < view.children.length; c++) {
+          if (String(view.children[c].tagName || "").toUpperCase() === "VIDEO") occupied = true;
+        }
       }
-      if (!remotes.length && unknown.length) remotes.push(unknown.shift());
-      while (unknown.length) locals.push(unknown.pop());
+      if (!occupied) return view;
     }
-    locals.forEach(function (video) { video.__vcomKind = "local"; });
-    remotes.forEach(function (video) { video.__vcomKind = "remote"; });
-    return {
-      local: locals.length ? locals[0].srcObject : null,
-      remote: remotes.length ? remotes[0].srcObject : null,
-      localEl: locals.length ? locals[0] : null,
-      remoteEl: remotes.length ? remotes[0] : null
-    };
+    return null;
+  }
+  function fitFlutterVideo(video) {
+    var host = platformViewOf(video);
+    if (!host) {
+      host = emptyPlatformView();
+      if (host && host.appendChild && video.parentElement !== host) {
+        try { host.appendChild(video); } catch (eBack) {}
+      }
+    }
+    if (video.__vcomSlotFit && platformViewOf(video) && video.style && video.style.position === "absolute" && video.style.width === "100%" && video.style.height === "100%") {
+      return false;
+    }
+    if (video.classList && video.classList.add) {
+      try { video.classList.add("vcom-slot-fit"); } catch (eClass) {}
+    }
+    ["top", "left", "right", "bottom", "z-index", "border-radius", "opacity", "margin"].forEach(function (prop) {
+      clearProp(video, prop);
+    });
+    styleProp(video, "position", "absolute");
+    styleProp(video, "inset", "0px");
+    styleProp(video, "width", "100%");
+    styleProp(video, "height", "100%");
+    styleProp(video, "object-fit", "cover");
+    styleProp(video, "object-position", "center center");
+    styleProp(video, "pointer-events", "none");
+    styleProp(video, "background", "#000");
+    styleProp(video, "transform", videoIsLocalPreview(video) ? "scaleX(-1)" : "none");
+    if (host) {
+      if (!host.style) host.style = {};
+      styleProp(host, "overflow", "hidden");
+    }
+    video.__vcomSlotFit = true;
+    video.__vcomLifted = false;
+    try { video.setAttribute("data-vcom-slot", "1"); } catch (eAttr) {}
+    try { video.removeAttribute("data-vcom-lifted"); } catch (eLift) {}
+    try { video.removeAttribute("data-vcom-kind"); } catch (eKind) {}
+    if (video.paused !== false && !video.__vcomPlayed) {
+      video.__vcomPlayed = true;
+      var play = video.play && video.play();
+      if (play && play.catch) play.catch(function () {});
+    }
+    return true;
   }
   window.vcomLiftCallVideos = function () {
     ensureVideoSkin();
+    ["vcom-stage-local", "vcom-stage-remote"].forEach(function (id) {
+      var stage = document.getElementById(id);
+      if (stage) window.vcomHideLiftedVideo(stage);
+    });
     var nodes = document.querySelectorAll('video[id^="video_"], #vcom-guest-remote-video, #vcom-guest-local-video, #vcom-guest video[data-remote], #vcom-guest video[data-local]');
     var shown = 0;
-    var flutter = [];
-    var sawFlutter = false;
-    var directLocal = false;
-    var directRemote = false;
     for (var i = 0; i < nodes.length; i++) {
       var video = nodes[i];
-      var flutterNode = String(video.id || "").indexOf("video_") === 0;
-      if (flutterNode) sawFlutter = true;
       var stream = video.srcObject;
       if (!window.vcomCallHasVideo(stream)) {
-        if (video.__vcomLifted || (video.getAttribute && video.getAttribute("data-vcom-lifted") === "1")) window.vcomHideLiftedVideo(video);
+        if (video.__vcomLifted || (video.getAttribute && (video.getAttribute("data-vcom-lifted") === "1" || video.getAttribute("data-vcom-kind")))) {
+          window.vcomHideLiftedVideo(video);
+        }
         continue;
       }
-      if (flutterNode) {
-        fadeFlutterVideo(video);
-        flutter.push(video);
+      if (isFlutterVideo(video)) {
+        fitFlutterVideo(video);
+        shown += 1;
         continue;
       }
       if (video.parentElement !== document.body) {
         try { document.body.appendChild(video); } catch (eMove) {}
       }
-      var directKind = window.vcomVideoIsLocal(video) ? "local" : "remote";
-      window.vcomAttachCallVideo(video, stream, directKind);
-      if (directKind === "local") directLocal = true;
-      else directRemote = true;
+      window.vcomAttachCallVideo(video, stream, window.vcomVideoIsLocal(video) ? "local" : "remote");
       shown += 1;
-    }
-    var stage = window.__vcomStageVideos || {};
-    var picked = flutter.length ? classifyFlutterVideos(flutter) : { local: null, remote: null };
-    if (!directRemote && picked.remote && window.vcomCallHasVideo(picked.remote)) {
-      window.vcomAttachCallVideo(stageVideo("remote"), displayStream(picked.remote), "remote", viewRect(picked.remoteEl, "remote"));
-      shown += 1;
-    } else if (directRemote || (sawFlutter && !picked.remote)) {
-      if (stage.remote) window.vcomHideLiftedVideo(stage.remote);
-    } else if (stage.remote && !window.vcomCallHasVideo(stage.remote.srcObject)) {
-      window.vcomHideLiftedVideo(stage.remote);
-    }
-    if (!directLocal && picked.local && window.vcomCallHasVideo(picked.local)) {
-      window.vcomAttachCallVideo(stageVideo("local"), displayStream(picked.local), "local", viewRect(picked.localEl, "local"));
-      shown += 1;
-    } else if (directLocal || (sawFlutter && !picked.local)) {
-      if (stage.local) window.vcomHideLiftedVideo(stage.local);
-    } else if (stage.local && !window.vcomCallHasVideo(stage.local.srcObject)) {
-      window.vcomHideLiftedVideo(stage.local);
     }
     return { ok: true, shown: shown };
   };
