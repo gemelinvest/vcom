@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid10"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid11"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -244,22 +244,34 @@ test("the side menu drops the handset and closes the link form with the drawer",
 test("chat messages can carry a voice note, a photo, or a video", function () {
   const src = fs.readFileSync(LINK, "utf8");
   assert.match(src, /data-mic aria-label="הקלטה"/);
-  assert.match(src, /data-camera aria-label="מצלמה"/);
-  assert.match(src, /data-gallery aria-label="גלריה"/);
-  assert.match(src, /data-video aria-label="סרטון"/);
+  assert.match(src, /data-options aria-label="אפשרויות"/);
+  assert.match(src, /data-gallery>שליחת תמונה מהגלריה/);
+  assert.match(src, /data-capture>צילום תמונה \/ סרטון/);
+  assert.equal(src.includes('data-camera'), false);
+  assert.equal(src.includes("vcom-chat-tools"), false);
   assert.match(src, /textContent = "מחק"/);
   assert.match(src, /dataset\.delete/);
   assert.equal(src.includes("vcom-chat-media-tray"), false);
-  assert.match(src, /capture = "environment"/);
-  assert.match(src, /accept = "video\/\*"/);
+  assert.match(src, /setAttribute\("capture", "environment"\)/);
+  assert.match(src, /accept = "image\/\*,video\/\*"/);
   assert.match(src, /new MediaRecorder\(stream\)/);
   assert.match(src, /pointerdown/);
+  assert.match(src, /plain \? " plain"/);
+  assert.match(src, /\.vcom-bubble\.plain,/);
   const w = loadLink();
   assert.equal(w.vcomChatSurfaceOpen("abc", 0, 2, false), false);
   assert.equal(w.vcomChatSurfaceOpen("abc", 2, 2, false), true);
   assert.equal(w.vcomChatSurfaceOpen("", 2, 2, false), false);
   assert.equal(w.vcomChatSurfaceOpen("abc", 2, 2, true), false);
   assert.equal(w.vcomChatSurfaceOpen("abc", 2, "", false), false);
+  assert.equal(w.vcomComposerOnScreen(null), null);
+  assert.equal(w.vcomComposerOnScreen([]), false);
+  assert.equal(w.vcomComposerOnScreen([{ label: "הודעות", visible: true }]), false);
+  assert.equal(w.vcomComposerOnScreen([{ label: "הודעה קולית", visible: true }]), false);
+  assert.equal(w.vcomComposerOnScreen([{ label: "הודעה", visible: false }]), false);
+  assert.equal(w.vcomComposerOnScreen([{ label: "הודעה", visible: true }]), true);
+  assert.equal(w.vcomComposerOnScreen([{ label: "", role: "textbox", visible: true, bottom: true }]), true);
+  assert.equal(w.vcomComposerOnScreen([{ label: "", role: "textbox", visible: true, bottom: false }]), false);
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("image", "https://example.com/a.jpg")), "תמונה");
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("audio", "https://example.com/a.webm")), "הודעה קולית");
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("video", "https://example.com/a.mp4")), "סרטון");

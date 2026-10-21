@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid10";
+  window.__VCOM_LINK_BUILD = "vid11";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1176,6 +1176,17 @@
     var view = Number(point.viewWidth) || 0;
     var inDrawer = rtl ? x > view - width : x < width;
     return !inDrawer;
+  };
+  window.vcomComposerOnScreen = function (labels) {
+    if (labels == null) return null;
+    for (var i = 0; i < labels.length; i++) {
+      var item = labels[i] || {};
+      if (!item.visible) continue;
+      var label = String(item.label || "").replace(/\s+/g, " ").trim();
+      if (label === "הודעה") return true;
+      if (item.bottom && item.role === "textbox" && label !== "הודעות") return true;
+    }
+    return false;
   };
   window.vcomChatSurfaceOpen = function (chat, tab, chatTab, blocked) {
     if (!chat) return false;
@@ -2472,7 +2483,14 @@
           var next = value | 0;
           var changed = next !== tabNow;
           tabNow = next;
-          if (changed && (window.__vcomDrawerX || 0) > 0.2) window.vcomCloseSideMenu();
+          if (!changed) return;
+          if ((window.__vcomDrawerX || 0) > 0.2) window.vcomCloseSideMenu();
+          var media = document.getElementById("vcom-chat-media");
+          if (media && (next !== (window.__vcomChatTab | 0) || !window.__vcomOpenChat)) {
+            media.hidden = true;
+            var sheetNow = document.getElementById("vcom-chat-sheet");
+            if (sheetNow) sheetNow.hidden = true;
+          }
         }
       });
     } catch (eTab) {}
@@ -2787,28 +2805,25 @@
     var root = document.createElement("div");
     root.id = "vcom-chat-media";
     root.hidden = true;
-    root.innerHTML = '<div id="vcom-chat-thread"></div><div id="vcom-chat-tools"><button type="button" data-camera aria-label="מצלמה">מצלמה</button><button type="button" data-gallery aria-label="גלריה">גלריה</button><button type="button" data-video aria-label="סרטון">סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה">הקלטה</button><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
+    root.innerHTML = '<div id="vcom-chat-thread"></div><button type="button" id="vcom-chat-options" data-options aria-label="אפשרויות">אפשרויות</button><div id="vcom-chat-sheet" hidden><button type="button" data-gallery>שליחת תמונה מהגלריה</button><button type="button" data-capture>צילום תמונה / סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
     document.body.appendChild(root);
     var thread = root.querySelector("#vcom-chat-thread");
+    var sheet = root.querySelector("#vcom-chat-sheet");
+    var options = root.querySelector("[data-options]");
     var status = root.querySelector("#vcom-chat-media-status");
     var recLabel = root.querySelector("#vcom-chat-rec");
     var mic = root.querySelector("[data-mic]");
     var camera = document.createElement("input");
     camera.type = "file";
-    camera.accept = "image/*";
-    camera.capture = "environment";
+    camera.accept = "image/*,video/*";
+    camera.setAttribute("capture", "environment");
     camera.hidden = true;
     var gallery = document.createElement("input");
     gallery.type = "file";
     gallery.accept = "image/*";
     gallery.hidden = true;
-    var video = document.createElement("input");
-    video.type = "file";
-    video.accept = "video/*";
-    video.hidden = true;
     root.appendChild(camera);
     root.appendChild(gallery);
-    root.appendChild(video);
     var watched = "";
     var unsub = null;
     var sending = false;
@@ -2816,6 +2831,7 @@
     var hold = false;
     var startedAt = 0;
     var messages = [];
+    var drawn = "";
     var player = document.createElement("audio");
     var playingId = "";
     function chatOpen() {
@@ -2840,24 +2856,38 @@
       return !!(user && senderId === user.uid);
     }
     function paint() {
+      var parts = [playingId];
+      for (var i = 0; i < messages.length; i++) {
+        var mark = messages[i];
+        var kind = mark.media ? mark.media.kind : "text";
+        parts.push(mark.id, mark.time, mark.mine ? "1" : "0", kind, kind === "text" ? (mark.text || "") : ((mark.media && mark.media.url) || ""));
+      }
+      var signature = parts.join("\u0001");
+      if (signature === drawn && thread.childNodes.length === messages.length) return;
+      drawn = signature;
       var nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
       thread.replaceChildren();
       messages.forEach(function (item) {
         var bubble = document.createElement("div");
-        bubble.className = "vcom-bubble" + (item.mine ? " mine" : "");
+        var mediaKind = item.media && item.media.kind;
+        var plain = mediaKind === "image" || mediaKind === "video";
+        bubble.className = "vcom-bubble" + (item.mine ? " mine" : "") + (plain ? " plain" : "");
         bubble.dataset.id = item.id;
         bubble.dataset.sender = item.senderId || "";
         var body;
-        if (item.media && item.media.kind === "image") {
+        if (mediaKind === "image") {
           body = document.createElement("img");
           body.alt = "";
+          body.decoding = "async";
+          body.loading = "lazy";
           body.src = item.media.url;
-        } else if (item.media && item.media.kind === "video") {
+        } else if (mediaKind === "video") {
           body = document.createElement("video");
           body.controls = true;
           body.playsInline = true;
+          body.preload = "metadata";
           body.src = item.media.url;
-        } else if (item.media && item.media.kind === "audio") {
+        } else if (mediaKind === "audio") {
           body = document.createElement("button");
           body.type = "button";
           body.className = "vcom-voice" + (playingId === item.id ? " on" : "");
@@ -2913,6 +2943,7 @@
       if (unsub) { try { unsub(); } catch (eUn) {} unsub = null; }
       watched = chatId || "";
       messages = [];
+      drawn = "";
       thread.replaceChildren();
       if (!watched) return;
       var fs = window.firebase_firestore;
@@ -2938,12 +2969,12 @@
         img.onload = function () {
           var canvas = document.createElement("canvas");
           var longest = Math.max(img.width || 1, img.height || 1);
-          var scale = Math.min(1, 1280 / longest);
+          var scale = Math.min(1, 960 / longest);
           canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
           canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
           canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
           URL.revokeObjectURL(local);
-          canvas.toBlob(function (blob) { resolve(blob || file); }, "image/jpeg", 0.72);
+          canvas.toBlob(function (blob) { resolve(blob || file); }, "image/jpeg", 0.62);
         };
         img.onerror = function () { URL.revokeObjectURL(local); resolve(file); };
         img.src = local;
@@ -3020,7 +3051,8 @@
       input.value = "";
       input.onchange = function () {
         var file = input.files && input.files[0];
-        if (file) sendFile(file, kind);
+        if (!file) return;
+        sendFile(file, typeof kind === "function" ? kind(file) : kind);
       };
       input.click();
     }
@@ -3081,9 +3113,26 @@
     mic.addEventListener("pointerdown", beginHold);
     mic.addEventListener("pointerup", endHold);
     mic.addEventListener("pointercancel", endHold);
-    root.querySelector("[data-camera]").addEventListener("click", function () { takeFile(camera, "image"); });
-    root.querySelector("[data-gallery]").addEventListener("click", function () { takeFile(gallery, "image"); });
-    root.querySelector("[data-video]").addEventListener("click", function () { takeFile(video, "video"); });
+    options.addEventListener("click", function (event) {
+      event.preventDefault();
+      sheet.hidden = !sheet.hidden;
+    });
+    root.querySelector("[data-gallery]").addEventListener("click", function () {
+      sheet.hidden = true;
+      takeFile(gallery, "image");
+    });
+    root.querySelector("[data-capture]").addEventListener("click", function () {
+      sheet.hidden = true;
+      takeFile(camera, function (file) {
+        return String(file.type || "").indexOf("video/") === 0 ? "video" : "image";
+      });
+    });
+    document.addEventListener("pointerdown", function (event) {
+      if (sheet.hidden) return;
+      var target = event.target;
+      if (target && target.closest && (target.closest("#vcom-chat-sheet") || target.closest("[data-options]"))) return;
+      sheet.hidden = true;
+    }, true);
     var pressTimer = 0;
     thread.addEventListener("pointerdown", function (event) {
       var bubble = event.target.closest && event.target.closest(".vcom-bubble");
@@ -3123,13 +3172,59 @@
       paint();
     });
     player.addEventListener("ended", function () { playingId = ""; paint(); });
+    function composerLabels() {
+      var host = document.querySelector("flt-semantics-host");
+      if (!host || !host.querySelectorAll) return null;
+      var seen = host.querySelectorAll("[role='button'], [data-semantics-role='text-field'], [aria-label]");
+      var real = false;
+      for (var n = 0; n < seen.length; n++) {
+        var name = seen[n].getAttribute ? (seen[n].getAttribute("aria-label") || "") : "";
+        if (name === "Enable accessibility") continue;
+        real = true;
+        break;
+      }
+      if (!real) return null;
+      var nodes = host.querySelectorAll("[aria-label='הודעה'], [data-semantics-role='text-field']");
+      var labels = [];
+      var view = window.innerHeight || 0;
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+        var visible = !!(rect && rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.top < view);
+        if (visible && rect && typeof document.elementFromPoint === "function") {
+          var hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 12));
+          var other = hit && hit.closest && hit.closest("flt-semantics");
+          if (other && other !== node && !(node.contains && node.contains(other)) && !(other.contains && other.contains(node))) visible = false;
+        }
+        var role = node.getAttribute ? (node.getAttribute("role") || "") : "";
+        if (node.getAttribute && node.getAttribute("data-semantics-role") === "text-field") role = "textbox";
+        labels.push({
+          label: node.getAttribute ? (node.getAttribute("aria-label") || node.getAttribute("placeholder") || "") : "",
+          role: role,
+          visible: visible,
+          bottom: !!(visible && rect && rect.top > view * 0.5)
+        });
+      }
+      return labels;
+    }
     setInterval(function () {
-      var open = chatOpen();
+      if (document.hidden) return;
+      var composer = window.vcomComposerOnScreen(composerLabels());
+      var open = chatOpen() && composer !== false;
       root.hidden = !open;
-      if (!open && hold) endHold();
-      var id = open ? window.__vcomOpenChat : "";
+      if (!open) {
+        sheet.hidden = true;
+        if (hold) endHold();
+        if (playingId) {
+          playingId = "";
+          try { player.pause(); } catch (ePause) {}
+        }
+        if (watched) watch("");
+        return;
+      }
+      var id = window.__vcomOpenChat || "";
       if (id !== watched) watch(id);
-    }, 400);
+    }, 700);
   }
   function issuerCss() {
     return ""
@@ -3155,22 +3250,28 @@
       + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;z-index:10021;background:#111;transform:scaleX(-1);pointer-events:none}"
       + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}"
       + "#vcom-chat-media[hidden]{display:none!important}"
-      + "#vcom-chat-thread{position:fixed;z-index:36;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 72px);bottom:calc(env(safe-area-inset-bottom,0px) + 118px);overflow:auto;background:#F2F2F7;padding:12px 10px 8px;box-sizing:border-box}"
-      + ".vcom-bubble{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;margin:0 0 8px auto;background:#fff;color:#1C1C1E;border-radius:16px 16px 4px 16px;padding:6px;position:relative}"
+      + "#vcom-chat-thread{position:fixed;z-index:36;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 72px);bottom:calc(env(safe-area-inset-bottom,0px) + 78px);overflow:auto;background:#F2F2F7;padding:12px 10px 8px;box-sizing:border-box}"
+      + ".vcom-bubble{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;margin:0 0 8px auto;background:#fff;color:#1C1C1E;border-radius:16px 16px 4px 16px;padding:6px;position:relative;content-visibility:auto;contain-intrinsic-size:72px}"
       + ".vcom-bubble.mine{margin:0 auto 8px 0;background:#007AFF;color:#fff;border-radius:16px 16px 16px 4px}"
+      + ".vcom-bubble.plain,.vcom-bubble.plain.mine{background:transparent;padding:0;box-shadow:none}"
       + ".vcom-bubble p{margin:0;padding:4px 8px;font:16px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;white-space:pre-wrap;word-break:break-word;direction:rtl}"
-      + ".vcom-bubble img,.vcom-bubble video{display:block;width:min(240px,68vw);max-height:280px;object-fit:cover;border-radius:12px;background:#111}"
+      + ".vcom-bubble img,.vcom-bubble video{display:block;width:min(240px,68vw);height:auto;max-height:320px;object-fit:contain;border-radius:14px;background:transparent}"
+      + ".vcom-bubble.plain time{color:#8E8E93;opacity:1}"
       + ".vcom-voice{min-height:44px;border:0;border-radius:12px;background:transparent;color:inherit;font:600 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:8px 12px}"
       + ".vcom-bubble time{align-self:flex-end;opacity:.75;font-size:11px;padding:2px 6px 0}"
       + ".vcom-bubble [data-delete]{display:none;position:absolute;top:-18px;left:8px;border:0;border-radius:10px;background:#FF3B30;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:32px;padding:0 10px}"
       + ".vcom-bubble.ask [data-delete]{display:block}"
-      + "#vcom-chat-tools{position:fixed;z-index:37;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 64px);display:flex;justify-content:flex-end;gap:8px}"
-      + "#vcom-chat-tools button{min-height:34px;border:0;border-radius:17px;background:#007AFF;color:#fff;padding:0 12px;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + "#vcom-chat-mic{position:fixed;z-index:38;left:54px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:46px;height:46px;border:0;border-radius:50%;background:#007AFF;color:#fff;font:700 11px/1.1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;touch-action:none}"
+      + "#vcom-chat-options{position:fixed;z-index:38;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);height:36px;padding:0 12px;border:1px solid #E5E5EA;border-radius:18px;background:#fff;color:#3A3A3C;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.06)}"
+      + "#vcom-chat-sheet{position:fixed;z-index:39;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);display:flex;flex-direction:column;min-width:220px;background:#fff;border:1px solid #E5E5EA;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.12);overflow:hidden;direction:rtl}"
+      + "#vcom-chat-sheet[hidden]{display:none!important}"
+      + "#vcom-chat-sheet button{min-height:48px;border:0;border-bottom:1px solid #F2F2F7;background:#fff;color:#1C1C1E;text-align:right;padding:12px 16px;font:600 15px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chat-sheet button:last-child{border-bottom:0}"
+      + "#vcom-chat-mic{position:fixed;z-index:38;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:42px;height:42px;border:0;border-radius:50%;background:#007AFF;color:#fff;display:grid;place-items:center;padding:0;touch-action:none}"
+      + "#vcom-chat-mic svg{display:block}"
       + "#vcom-chat-mic.rec{background:#FF3B30}"
-      + "#vcom-chat-rec{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);margin:0;color:#FF3B30;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right}"
+      + "#vcom-chat-rec{position:fixed;z-index:38;left:58px;right:108px;bottom:calc(env(safe-area-inset-bottom,0px) + 20px);margin:0;color:#FF3B30;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right;pointer-events:none}"
       + "#vcom-chat-rec[hidden]{display:none!important}"
-      + "#vcom-chat-media-status{position:fixed;z-index:38;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 102px);margin:0;color:#C62828;font-size:13px;text-align:right}";
+      + "#vcom-chat-media-status{position:fixed;z-index:38;left:56px;right:108px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);margin:0;color:#C62828;font-size:13px;text-align:center;pointer-events:none}";
   }
   function guestCss() {
     return ""
