@@ -219,12 +219,26 @@ test("owner does not auto-start from the drawer when a guest is ringing", functi
   assert.equal(w.vcomShouldAutoStartGuest({ status: "ringing", offer: { sdp: "x" } }, { fy: function () { return false; }, isOnCall: function () { return false; } }), false);
 });
 
-test("קבל לינק חדש is emphasized, not faint caption gray", function () {
+test("הנפקת קישור שיחה is emphasized, not faint caption gray", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.match(src, /קבל לינק חדש/);
+  assert.match(src, /הנפקת קישור שיחה/);
+  assert.equal(src.includes("קבל לינק חדש"), false);
   assert.match(src, /#vcom-link-open\{[^}]*font:600 17px/);
   assert.match(src, /#vcom-link-open\{[^}]*color:#1C1C1E/);
   assert.doesNotMatch(src, /#vcom-link-open\{[^}]*color:#8E8E93/);
+});
+
+test("a stalled link lookup cannot leave the button waiting", async function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  const issue = src.match(/function issue\(name, generation\) \{[\s\S]*?\n    function place\(\)/);
+  assert.ok(issue, "issue exists");
+  assert.equal(src.includes("okButton.addEventListener(\"pointerup\""), false);
+  assert.equal(src.includes("okButton.addEventListener(\"touchend\""), false);
+  assert.match(src, /form\.addEventListener\("submit", confirmName\)/);
+  assert.match(issue[0], /window\.__vcomGuestBook\[phone\] = \{[\s\S]*?watch\(code\);[\s\S]*?updateDoc/);
+  assert.equal(/return window\.vcomWithDeadline\(fs\.updateDoc/.test(issue[0]), false);
+  const w = loadLink();
+  await assert.rejects(w.vcomWithDeadline(new Promise(function () {}), 30), /timeout/);
 });
 
 test("guest name on the link card is not clipped", function () {
