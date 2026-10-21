@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid6";
+  window.__VCOM_LINK_BUILD = "vid7";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -82,6 +82,27 @@
     var m = when.getMinutes();
     return "הלינק בתוקף עד " + (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
   }
+  window.vcomWithDeadline = function (promise, ms) {
+    return new Promise(function (resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        reject(new Error("timeout"));
+      }, ms);
+      Promise.resolve(promise).then(function (value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      }, function (err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  };
 
   var ringAudio = new Audio("/assets/assets/sounds/incoming_call.wav");
   ringAudio.id = "vcom-ring";
@@ -1756,7 +1777,7 @@
     var menu = document.createElement("div");
     menu.id = "vcom-link-menu";
     menu.hidden = true;
-    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">קבל לינק חדש</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
     document.body.appendChild(menu);
     var logo = document.createElement("img");
     logo.id = "vcom-menu-logo";
@@ -1986,13 +2007,27 @@
       });
       return max;
     }
+    function resetIssueButton() {
+      if (okButton) okButton.textContent = "אישור";
+    }
     function finishIssue(generation) {
-      if (generation !== window.__vcomIssueGen || !busy) return;
+      if (generation !== window.__vcomIssueGen) return;
+      if (window.__vcomIssueDone === generation) return;
+      window.__vcomIssueDone = generation;
       busy = false;
       showForm(false);
       nameInput.value = "";
-      if (okButton.isConnected) okButton.textContent = "אישור";
+      error.textContent = "";
+      resetIssueButton();
       render();
+    }
+    function failIssue(generation, err) {
+      if (generation !== window.__vcomIssueGen) return;
+      if (window.__vcomIssueDone === generation) return;
+      busy = false;
+      window.__vcomIssueErr = String(err && (err.code || err.message) || err || "timeout");
+      resetIssueButton();
+      if (!error.textContent) error.textContent = "לא הצלחנו להנפיק קישור. נסה שוב.";
     }
     function confirmName(event) {
       if (event) event.preventDefault();
@@ -2006,39 +2041,19 @@
       error.textContent = "";
       okButton.textContent = "רגע";
       var generation = (window.__vcomIssueGen = (window.__vcomIssueGen || 0) + 1);
-      var seenExpiry = newestExpiry();
-      window.__vcomIssueSeen = seenExpiry;
+      window.__vcomIssueDone = 0;
+      window.__vcomIssueSeen = newestExpiry();
       var pending;
-      try { pending = issue(name); }
+      try { pending = issue(name, generation); }
       catch (err) { pending = Promise.reject(err); }
-      var timer = setTimeout(function () {
-        if (generation !== window.__vcomIssueGen || !busy) return;
-        if (newestExpiry() > seenExpiry) {
-          finishIssue(generation);
-          return;
-        }
-        busy = false;
-        if (okButton.isConnected) okButton.textContent = "אישור";
-        if (!error.textContent) error.textContent = "לא הצלחנו להנפיק קישור. נסה שוב.";
-      }, 12000);
-      Promise.resolve(pending).then(function () {
-        clearTimeout(timer);
+      window.vcomWithDeadline(pending, 8000).then(function () {
         finishIssue(generation);
       }).catch(function (err) {
-        if (generation !== window.__vcomIssueGen) return;
-        clearTimeout(timer);
-        window.__vcomIssueErr = String(err && (err.code || err.message) || err);
-        error.textContent = "לא הצלחנו להנפיק קישור. נסה שוב.";
-      }).then(function () {
-        if (generation !== window.__vcomIssueGen) return;
-        clearTimeout(timer);
-        busy = false;
-        if (okButton.isConnected) okButton.textContent = "אישור";
+        if (newestExpiry() > window.__vcomIssueSeen) finishIssue(generation);
+        else failIssue(generation, err);
       });
     }
     form.addEventListener("submit", confirmName);
-    okButton.addEventListener("pointerup", confirmName);
-    okButton.addEventListener("touchend", confirmName);
     function alphabetCode() {
       var alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
       var bytes = new Uint8Array(6);
@@ -2047,7 +2062,11 @@
       for (var i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % alphabet.length];
       return out;
     }
-    function issue(name) {
+    function phoneTaken(snaps, phone) {
+      if (window.__vcomGuestBook[phone]) return true;
+      return !!((snaps[0] && snaps[0].exists && snaps[0].exists()) || (snaps[1] && snaps[1].exists && snaps[1].exists()));
+    }
+    function issue(name, generation) {
       var fs = fsNow();
       var uid = window.__vcomUid;
       var profile = window.__vcomProfile || {};
@@ -2056,18 +2075,23 @@
       var code = alphabetCode();
       function pick(left) {
         var phone = "020" + String(100000 + Math.floor(Math.random() * 900000));
-        return Promise.all([
+        if (window.__vcomGuestBook[phone]) {
+          if (left <= 1) return Promise.reject(new Error("phone"));
+          return pick(left - 1);
+        }
+        return window.vcomWithDeadline(Promise.all([
           fs.getDoc(fs.doc(db, "phoneNumbers", phone)),
           fs.getDoc(fs.doc(db, "guestPhones", phone))
-        ]).then(function (snaps) {
-          if ((snaps[0] && snaps[0].exists && snaps[0].exists()) || (snaps[1] && snaps[1].exists && snaps[1].exists()) || window.__vcomGuestBook[phone]) {
-            if (left <= 1) throw new Error("phone");
-            return pick(left - 1);
-          }
-          return phone;
+        ]), 2500).then(function (snaps) {
+          if (!phoneTaken(snaps, phone)) return phone;
+          if (left <= 1) throw new Error("phone");
+          return pick(left - 1);
+        }, function () {
+          if (left <= 1) throw new Error("phone");
+          return pick(left - 1);
         });
       }
-      return pick(8).then(function (phone) {
+      return pick(2).then(function (phone) {
         var now = Date.now();
         var data = {
           code: code,
@@ -2085,16 +2109,12 @@
           guestCandidates: [],
           callStartedAt: null
         };
-        return fs.setDoc(fs.doc(db, "guestPhones", phone), {
+        return window.vcomWithDeadline(fs.setDoc(fs.doc(db, "guestPhones", phone), {
           ownerId: uid,
           code: code,
           expiresAt: data.expiresAt
-        }).then(function () {
-          return fs.setDoc(fs.doc(db, "guestLinks", code), data);
-        }).then(function () {
-          var patch = {};
-          patch["guestLinks." + code] = { name: name, phone: phone, expiresAt: data.expiresAt, status: "waiting" };
-          return fs.updateDoc(fs.doc(db, "users", uid), patch).catch(function () {});
+        }), 4000).then(function () {
+          return window.vcomWithDeadline(fs.setDoc(fs.doc(db, "guestLinks", code), data), 4000);
         }).then(function () {
           window.__vcomGuestBook[phone] = {
             code: code,
@@ -2107,6 +2127,11 @@
             fromLink: true
           };
           watch(code);
+          render();
+          var patch = {};
+          patch["guestLinks." + code] = { name: name, phone: phone, expiresAt: data.expiresAt, status: "waiting" };
+          window.vcomWithDeadline(fs.updateDoc(fs.doc(db, "users", uid), patch), 4000).catch(function () {});
+          if (generation) finishIssue(generation);
         });
       });
     }
