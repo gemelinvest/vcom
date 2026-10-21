@@ -1153,7 +1153,7 @@
     var kind = parts[1] || "";
     var url = parts.slice(2).join("\n");
     if (kind !== "image" && kind !== "video" && kind !== "audio") return null;
-    if (!/^https:\/\//.test(url)) return null;
+    if (!/^https:\/\//.test(url) && !/^data:(image|audio|video)\//.test(url)) return null;
     return { kind: kind, url: url };
   };
   window.vcomMediaLabel = function (text) {
@@ -2877,6 +2877,50 @@
         return auth && auth.getAuth ? auth.getAuth().currentUser : null;
       } catch (eUser) { return null; }
     }
+    function fitImage(file) {
+      return new Promise(function (resolve) {
+        if (typeof Image !== "function") { resolve(file); return; }
+        var img = new Image();
+        var local = URL.createObjectURL(file);
+        img.onload = function () {
+          var canvas = document.createElement("canvas");
+          var longest = Math.max(img.width || 1, img.height || 1);
+          var scale = Math.min(1, 1280 / longest);
+          canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
+          canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(local);
+          canvas.toBlob(function (blob) { resolve(blob || file); }, "image/jpeg", 0.72);
+        };
+        img.onerror = function () { URL.revokeObjectURL(local); resolve(file); };
+        img.src = local;
+      });
+    }
+    function fileUrl(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function () { resolve(String(reader.result || "")); };
+        reader.onerror = function () { reject(new Error("read")); };
+        reader.readAsDataURL(file);
+      });
+    }
+    function uploadFile(file, user, chatId, kind) {
+      var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      var ext = kind === "audio" ? "webm" : kind === "video" ? "mp4" : "jpg";
+      var path = "chat-media/" + user.uid + "/" + chatId + "/" + id + "." + ext;
+      return user.getIdToken().then(function (token) {
+        return fetch("https://firebasestorage.googleapis.com/v0/b/voip-call-app-7d0c3.firebasestorage.app/o?uploadType=media&name=" + encodeURIComponent(path), {
+          method: "POST",
+          headers: { Authorization: "Firebase " + token, "Content-Type": file.type || "application/octet-stream" },
+          body: file
+        });
+      }).then(function (res) {
+        if (!res.ok) throw new Error("upload");
+        return res.json().then(function (data) {
+          return "https://firebasestorage.googleapis.com/v0/b/voip-call-app-7d0c3.firebasestorage.app/o/" + encodeURIComponent(path) + "?alt=media&token=" + (data.downloadTokens || "");
+        });
+      });
+    }
     function sendFile(file, kind) {
       var chatId = window.__vcomOpenChat;
       var user = currentUser();
@@ -2887,44 +2931,36 @@
       }
       sending = true;
       status.textContent = "שולח...";
-      user.getIdToken().then(function (token) {
-        var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        var ext = kind === "audio" ? "webm" : kind === "video" ? "mp4" : "jpg";
-        var path = "chat-media/" + user.uid + "/" + chatId + "/" + id + "." + ext;
-        return fetch("https://firebasestorage.googleapis.com/v0/b/voip-call-app-7d0c3.firebasestorage.app/o?uploadType=media&name=" + encodeURIComponent(path), {
-          method: "POST",
-          headers: { Authorization: "Firebase " + token, "Content-Type": file.type || "application/octet-stream" },
-          body: file
-        }).then(function (res) {
-          if (!res.ok) throw new Error("upload");
-          return res.json().then(function (data) {
-            return "https://firebasestorage.googleapis.com/v0/b/voip-call-app-7d0c3.firebasestorage.app/o/" + encodeURIComponent(path) + "?alt=media&token=" + (data.downloadTokens || "");
+      var ready = kind === "image" ? fitImage(file) : Promise.resolve(file);
+      ready.then(function (packed) {
+        return uploadFile(packed, user, chatId, kind).catch(function () {
+          if (packed.size > 500000) throw new Error("big");
+          return fileUrl(packed);
+        }).then(function (url) {
+          var fs = window.firebase_firestore;
+          if (!fs || !fs.doc || !fs.setDoc || !fs.getFirestore) throw new Error("no-store");
+          var db = fs.getFirestore();
+          var text = window.vcomEncodeMedia(kind, url);
+          var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
+          var messageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+          return fs.setDoc(fs.doc(db, "chats", chatId, "messages", messageId), {
+            senderId: user.uid,
+            text: text,
+            type: "text",
+            createdAt: when
+          }).then(function () {
+            return fs.updateDoc(fs.doc(db, "chats", chatId), {
+              lastMessage: window.vcomMediaLabel(text),
+              lastMessageAt: when,
+              updatedAt: when,
+              lastSenderId: user.uid
+            }).catch(function () {});
           });
-        });
-      }).then(function (url) {
-        var fs = window.firebase_firestore;
-        if (!fs || !fs.doc || !fs.setDoc || !fs.getFirestore) throw new Error("no-store");
-        var db = fs.getFirestore();
-        var text = window.vcomEncodeMedia(kind, url);
-        var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
-        var messageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        return fs.setDoc(fs.doc(db, "chats", chatId, "messages", messageId), {
-          senderId: user.uid,
-          text: text,
-          type: "text",
-          createdAt: when
-        }).then(function () {
-          return fs.updateDoc(fs.doc(db, "chats", chatId), {
-            lastMessage: window.vcomMediaLabel(text),
-            lastMessageAt: when,
-            updatedAt: when,
-            lastSenderId: user.uid
-          }).catch(function () {});
         });
       }).then(function () {
         status.textContent = "";
-      }).catch(function () {
-        status.textContent = "לא הצלחנו לשלוח";
+      }).catch(function (err) {
+        status.textContent = err && err.message === "big" ? "הקובץ גדול מדי" : "לא הצלחנו לשלוח";
       }).then(function () { sending = false; });
     }
     function takeFile(input, kind) {

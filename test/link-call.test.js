@@ -256,6 +256,9 @@ test("chat messages can carry a voice note, a photo, or a video", function () {
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("video", "https://example.com/a.mp4")), "סרטון");
   assert.equal(w.vcomMediaLabel("שלום"), "");
   assert.equal(w.vcomParseMedia("vcom-media\nimage\nhttp://example.com/a.jpg"), null);
+  assert.equal(w.vcomParseMedia("vcom-media\nimage\ndata:image/jpeg;base64,abc").kind, "image");
+  assert.equal(w.vcomParseMedia("vcom-media\naudio\ndata:audio/webm;base64,abc").kind, "audio");
+  assert.equal(w.vcomParseMedia("vcom-media\nimage\njavascript:alert(1)"), null);
 });
 
 test("answering or a new audio capture clears a leftover loudspeaker latch", async function () {
