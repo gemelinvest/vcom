@@ -164,6 +164,137 @@ test("earpiece is a route change, not a quieter speaker", function () {
   assert.equal(el.volume, 1);
 });
 
+test("a regular audio call stays on the earpiece when the other side answers", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid10"'), true);
+  const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
+  assert.ok(apply, "earpiece apply exists");
+  assert.equal(apply[0].includes(".muted"), false);
+  assert.match(src, /addEventListener\("play", onCallMedia, true\)/);
+  assert.match(src, /addEventListener\("playing", onCallMedia, true\)/);
+  const w = loadLink();
+  const sinks = [];
+  const session = { type: "playback" };
+  w.navigator.audioSession = session;
+  w.__vcomSpeaker = true;
+  w.__vcomSpeakerTouched = true;
+  w.__vcomUserSpeaker = false;
+  w.__vcomRinging = false;
+  w.__vcomGuestVideo = false;
+  const remote = {
+    id: "audio_RTCVideoRenderer-1",
+    tagName: "AUDIO",
+    srcObject: {
+      getAudioTracks: function () { return [{ readyState: "live" }]; },
+      getVideoTracks: function () { return []; }
+    },
+    setSinkId: function (id) {
+      sinks.push(id);
+      this.sinkId = id;
+      return Promise.resolve();
+    }
+  };
+  w.document.querySelectorAll = function () { return [remote]; };
+  assert.equal(w.vcomAudioCallWantsEarpiece(), true);
+  assert.equal(w.vcomHoldEarpiece(remote), "earpiece");
+  assert.equal(session.type, "play-and-record");
+  assert.equal(w.__vcomSpeaker, false);
+  assert.equal(sinks.indexOf("communications") >= 0, true);
+  w.vcomSetSpeaker(true);
+  assert.equal(w.__vcomUserSpeaker, true);
+  assert.equal(session.type, "auto");
+  session.type = "play-and-record";
+  assert.equal(w.vcomHoldEarpiece(remote), "skip");
+  assert.equal(session.type, "play-and-record");
+  w.__vcomUserSpeaker = false;
+  w.__vcomGuestVideo = true;
+  assert.equal(w.vcomAudioCallWantsEarpiece(), false);
+  w.__vcomGuestVideo = false;
+  w.__vcomRinging = true;
+  assert.equal(w.vcomAudioCallWantsEarpiece(), false);
+  w.__vcomRinging = false;
+  w.__vcomSpeakerTouched = true;
+  w.__vcomSpeaker = true;
+  w.vcomSetEarpieceDefault();
+  assert.equal(w.__vcomSpeakerTouched, false);
+  assert.equal(session.type, "play-and-record");
+});
+
+test("the side menu drops the handset and closes the link form with the drawer", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.equal(src.includes("logo.style.left"), false);
+  assert.match(src, /logo\.hidden = true/);
+  assert.match(src, /previous > 0\.2 && x < 0\.05 && !busy/);
+  assert.match(src, /nameInput\.value = ""/);
+  const w = loadLink();
+  w.__vcomDrawerX = 1;
+  w.__vcomDrawerWidth = 304;
+  assert.equal(w.vcomDrawerTapShouldClose({ x: 20, viewWidth: 400, rtl: true, insideMenu: false }), true);
+  assert.equal(w.vcomDrawerTapShouldClose({ x: 360, viewWidth: 400, rtl: true, insideMenu: false }), false);
+  assert.equal(w.vcomDrawerTapShouldClose({ x: 20, viewWidth: 400, rtl: true, insideMenu: true }), false);
+  w.__vcomDrawerX = 0;
+  assert.equal(w.vcomDrawerTapShouldClose({ x: 20, viewWidth: 400, rtl: true, insideMenu: false }), false);
+  let closed = false;
+  w.__vcomDrawerState = { aJ: function () { closed = true; } };
+  w.__vcomDrawerX = 1;
+  assert.equal(w.vcomCloseSideMenu(), true);
+  assert.equal(closed, true);
+});
+
+test("chat messages can carry a voice note, a photo, or a video", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /data-mic aria-label="הקלטה"/);
+  assert.match(src, /data-camera aria-label="מצלמה"/);
+  assert.match(src, /data-gallery aria-label="גלריה"/);
+  assert.match(src, /data-video aria-label="סרטון"/);
+  assert.match(src, /textContent = "מחק"/);
+  assert.match(src, /dataset\.delete/);
+  assert.equal(src.includes("vcom-chat-media-tray"), false);
+  assert.match(src, /capture = "environment"/);
+  assert.match(src, /accept = "video\/\*"/);
+  assert.match(src, /new MediaRecorder\(stream\)/);
+  assert.match(src, /pointerdown/);
+  const w = loadLink();
+  assert.equal(w.vcomChatSurfaceOpen("abc", 0, 2, false), false);
+  assert.equal(w.vcomChatSurfaceOpen("abc", 2, 2, false), true);
+  assert.equal(w.vcomChatSurfaceOpen("", 2, 2, false), false);
+  assert.equal(w.vcomChatSurfaceOpen("abc", 2, 2, true), false);
+  assert.equal(w.vcomChatSurfaceOpen("abc", 2, "", false), false);
+  assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("image", "https://example.com/a.jpg")), "תמונה");
+  assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("audio", "https://example.com/a.webm")), "הודעה קולית");
+  assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("video", "https://example.com/a.mp4")), "סרטון");
+  assert.equal(w.vcomMediaLabel("שלום"), "");
+  assert.equal(w.vcomParseMedia("vcom-media\nimage\nhttp://example.com/a.jpg"), null);
+  assert.equal(w.vcomParseMedia("vcom-media\nimage\ndata:image/jpeg;base64,abc").kind, "image");
+  assert.equal(w.vcomParseMedia("vcom-media\naudio\ndata:audio/webm;base64,abc").kind, "audio");
+  assert.equal(w.vcomParseMedia("vcom-media\nimage\njavascript:alert(1)"), null);
+});
+
+test("answering or a new audio capture clears a leftover loudspeaker latch", async function () {
+  const w = loadLink();
+  w.__vcomUserSpeaker = true;
+  w.__vcomSpeaker = true;
+  w.__vcomSpeakerTouched = true;
+  w.navigator.audioSession = { type: "auto" };
+  w.vcomStopRing();
+  assert.equal(w.__vcomUserSpeaker, true);
+  w.__vcomUserSpeaker = false;
+  w.__vcomSpeaker = true;
+  w.__vcomSpeakerTouched = true;
+  const stream = await w.navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  assert.equal(w.vcomCallHasVideo(stream), false);
+  assert.equal(w.__vcomUserSpeaker, false);
+  assert.equal(w.__vcomSpeaker, false);
+  assert.equal(w.__vcomSpeakerTouched, false);
+  assert.equal(w.navigator.audioSession.type, "play-and-record");
+  const answered = w.vcomOnRemoteAnswer({
+    stopRingback: function () {},
+    setCallPhase: function () {}
+  });
+  assert.equal(answered.phase, "connecting");
+  assert.equal(w.navigator.audioSession.type, "play-and-record");
+});
+
 test("Android earpiece sink prefers receiver, never default speaker", function () {
   const w = loadLink();
   assert.equal(w.vcomPickAudioSink([
