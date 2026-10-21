@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid5";
+  window.__VCOM_LINK_BUILD = "vid6";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -269,10 +269,9 @@
     var skin = document.createElement("style");
     skin.id = "vcom-video-skin";
     skin.textContent = ""
-      + "video[id^=\"video_\"].vcom-slot-fit{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;margin:0!important;object-fit:cover!important;object-position:center center!important;background:#000!important;border:0!important;border-radius:0!important;opacity:1!important;z-index:auto!important;pointer-events:none!important;transform-origin:center center!important}"
-      + "video[id^=\"video_\"].vcom-slot-fit[data-vcom-local=\"1\"]{transform:scaleX(-1)!important}"
-      + "video[id^=\"video_\"].vcom-slot-fit:not([data-vcom-local=\"1\"]){transform:none!important}"
-      + "flt-platform-view:has(video.vcom-slot-fit){overflow:hidden!important}"
+      + "video[id^=\"video_\"].vcom-pip{position:fixed!important;top:var(--vcom-top)!important;left:var(--vcom-left)!important;width:var(--vcom-w)!important;height:var(--vcom-h)!important;right:auto!important;bottom:auto!important;margin:0!important;object-fit:cover!important;object-position:center center!important;pointer-events:none!important;background:#000!important;overflow:hidden!important;opacity:1!important;max-width:none!important;max-height:none!important}"
+      + "video[id^=\"video_\"].vcom-pip[data-vcom-local=\"1\"]{z-index:10030!important;border-radius:16px!important;transform:scaleX(-1)!important}"
+      + "video[id^=\"video_\"].vcom-pip:not([data-vcom-local=\"1\"]){z-index:10020!important;border-radius:0!important;transform:none!important}"
       + "#vcom-guest-remote-video,#vcom-stage-remote{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10020!important;background:#000!important;pointer-events:none!important}"
       + "#vcom-guest-local-video,#vcom-stage-local{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10021!important;background:#111!important;pointer-events:none!important;transform:scaleX(-1)!important}"
       + "[data-vcom-kind][hidden],video[id^=\"video_\"][hidden]{display:none!important}";
@@ -406,7 +405,13 @@
     el.hidden = true;
     el.__vcomLifted = false;
     el.__vcomBox = "";
+    el.__vcomPinSig = "";
+    el.__vcomPipRect = null;
+    el.__vcomPipFallback = false;
+    el.__vcomPlayed = false;
+    el.__vcomSlotFit = false;
     try { el.setAttribute("hidden", "true"); } catch (eHid) {}
+    try { el.removeAttribute("data-vcom-pinned"); } catch (ePin) {}
     el.style.zIndex = "0";
     el.style.width = "0";
     el.style.height = "0";
@@ -449,6 +454,7 @@
     for (var i = 0; i < views.length; i++) {
       var view = views[i];
       if (!view || view === document.body) continue;
+      if (String(view.tagName || "").toUpperCase() !== "FLT-PLATFORM-VIEW") continue;
       var occupied = false;
       try {
         if (view.querySelector && view.querySelector("video")) occupied = true;
@@ -462,47 +468,160 @@
     }
     return null;
   }
-  function fitFlutterVideo(video) {
-    var host = platformViewOf(video);
-    if (!host) {
-      host = emptyPlatformView();
-      if (host && host.appendChild && video.parentElement !== host) {
-        try { host.appendChild(video); } catch (eBack) {}
+  function readBox(node) {
+    if (!node || !node.getBoundingClientRect) return null;
+    try {
+      var rect = node.getBoundingClientRect();
+      if (!rect || rect.width < 8 || rect.height < 8) return null;
+      return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+    } catch (eBox) { return null; }
+  }
+  function isLocalFrame(box) {
+    if (!box) return false;
+    if (box.width < 72 || box.width > 200 || box.height < 100 || box.height > 280) return false;
+    var ratio = box.height / box.width;
+    return ratio >= 1.05 && ratio <= 2.2;
+  }
+  function styleValue(node, prop) {
+    if (!node || !node.style) return "";
+    try {
+      if (node.style.getPropertyValue) {
+        var value = node.style.getPropertyValue(prop);
+        if (value) return value;
       }
+    } catch (eStyle) {}
+    return "";
+  }
+  function frameFromClip(node) {
+    var current = node;
+    var guard = 0;
+    while (current && guard < 12) {
+      var clip = styleValue(current, "clip-path");
+      var match = /rect\(\s*([0-9.]+)px\s+([0-9.]+)px\s+([0-9.]+)px\s+([0-9.]+)px/i.exec(clip || "");
+      if (match) {
+        var insetTop = parseFloat(match[1]);
+        var insetRight = parseFloat(match[2]);
+        var insetBottom = parseFloat(match[3]);
+        var insetLeft = parseFloat(match[4]);
+        var width = insetRight - insetLeft;
+        var height = insetBottom - insetTop;
+        var frame = { top: 0, left: 0, width: width, height: height };
+        if (isLocalFrame(frame)) {
+          var host = readBox(current);
+          if (host) {
+            return { top: host.top + insetTop, left: host.left + insetLeft, width: width, height: height };
+          }
+        }
+      }
+      current = current.parentElement;
+      guard += 1;
     }
-    if (video.__vcomSlotFit && platformViewOf(video) && video.style && video.style.position === "absolute" && video.style.width === "100%" && video.style.height === "100%") {
-      return false;
+    return null;
+  }
+  function shadowSlot(video) {
+    var host = platformViewOf(video);
+    if (!host || !host.getAttribute || !document.querySelector) return null;
+    var name = "";
+    try { name = host.getAttribute("slot") || ""; } catch (eSlot) {}
+    if (!name || name.indexOf("\"") >= 0) return null;
+    var glass = document.querySelector("flt-glass-pane");
+    var shadow = glass && glass.shadowRoot;
+    if (!shadow || !shadow.querySelector) return null;
+    var slot = shadow.querySelector('slot[name="' + name + '"]');
+    return slot ? (slot.parentElement || slot) : null;
+  }
+  function measuredPip(video) {
+    var host = platformViewOf(video);
+    var slot = shadowSlot(video);
+    var clipped = frameFromClip(slot) || frameFromClip(host);
+    if (isLocalFrame(clipped)) return clipped;
+    var direct = readBox(slot) || readBox(host);
+    if (isLocalFrame(direct)) return direct;
+    var empty = emptyPlatformView();
+    if (empty && empty !== host) {
+      var vacant = readBox(empty);
+      if (isLocalFrame(vacant)) return vacant;
     }
+    return null;
+  }
+  function fallbackPip() {
+    var view = document.querySelector && document.querySelector("flutter-view");
+    var origin = readBox(view) || { top: 0, left: 0, width: 0, height: 0 };
+    return { top: origin.top + 18, left: origin.left + 18, width: 108, height: 152 };
+  }
+  function lockPip(video, box, fallback) {
+    var prev = video.__vcomPipRect;
+    if (prev && !video.__vcomPipFallback) return prev;
+    if (prev && video.__vcomPipFallback && fallback) return prev;
+    video.__vcomPipRect = { top: box.top, left: box.left, width: box.width, height: box.height };
+    video.__vcomPipFallback = !!fallback;
+    return video.__vcomPipRect;
+  }
+  function farBox() {
+    if (window.__vcomFarRect) return window.__vcomFarRect;
+    var vh = window.innerHeight || 800;
+    var vw = window.innerWidth || 400;
+    var head = Math.round(Math.max(88, vh * 0.11));
+    var dock = Math.round(Math.max(136, vh * 0.18));
+    window.__vcomFarRect = { top: head, left: 0, width: vw, height: Math.max(120, vh - head - dock) };
+    return window.__vcomFarRect;
+  }
+  function pinCallVideo(video, box, local) {
+    var top = Math.round(box.top);
+    var left = Math.round(box.left);
+    var width = Math.round(box.width);
+    var height = Math.round(box.height);
+    var sig = [local ? "local" : "remote", top, left, width, height].join("|");
     if (video.classList && video.classList.add) {
-      try { video.classList.add("vcom-slot-fit"); } catch (eClass) {}
+      try { video.classList.add("vcom-pip"); } catch (eClass) {}
     }
-    ["top", "left", "right", "bottom", "z-index", "border-radius", "opacity", "margin"].forEach(function (prop) {
-      clearProp(video, prop);
-    });
-    styleProp(video, "position", "absolute");
-    styleProp(video, "inset", "0px");
-    styleProp(video, "width", "100%");
-    styleProp(video, "height", "100%");
+    if (local) {
+      try { video.setAttribute("data-vcom-local", "1"); } catch (eLocal) {}
+    }
+    video.__vcomPinSig = sig;
+    styleProp(video, "--vcom-top", top + "px");
+    styleProp(video, "--vcom-left", left + "px");
+    styleProp(video, "--vcom-w", width + "px");
+    styleProp(video, "--vcom-h", height + "px");
+    styleProp(video, "position", "fixed");
+    styleProp(video, "top", top + "px");
+    styleProp(video, "left", left + "px");
+    styleProp(video, "width", width + "px");
+    styleProp(video, "height", height + "px");
+    styleProp(video, "right", "auto");
+    styleProp(video, "bottom", "auto");
     styleProp(video, "object-fit", "cover");
     styleProp(video, "object-position", "center center");
+    styleProp(video, "border-radius", local ? "16px" : "0px");
+    styleProp(video, "z-index", local ? "10030" : "10020");
+    styleProp(video, "transform", local ? "scaleX(-1)" : "none");
     styleProp(video, "pointer-events", "none");
+    styleProp(video, "margin", "0");
+    styleProp(video, "opacity", "1");
     styleProp(video, "background", "#000");
-    styleProp(video, "transform", videoIsLocalPreview(video) ? "scaleX(-1)" : "none");
-    if (host) {
-      if (!host.style) host.style = {};
-      styleProp(host, "overflow", "hidden");
-    }
-    video.__vcomSlotFit = true;
-    video.__vcomLifted = false;
-    try { video.setAttribute("data-vcom-slot", "1"); } catch (eAttr) {}
+    video.hidden = false;
+    video.__vcomPinned = true;
+    try { video.removeAttribute("hidden"); } catch (eHid) {}
+    try { video.setAttribute("data-vcom-pinned", "1"); } catch (ePin) {}
     try { video.removeAttribute("data-vcom-lifted"); } catch (eLift) {}
-    try { video.removeAttribute("data-vcom-kind"); } catch (eKind) {}
+    if (document.body && video.parentElement !== document.body && document.body.appendChild) {
+      try { document.body.appendChild(video); } catch (eMove) {}
+    }
     if (video.paused !== false && !video.__vcomPlayed) {
       video.__vcomPlayed = true;
       var play = video.play && video.play();
       if (play && play.catch) play.catch(function () {});
     }
-    return true;
+  }
+  function fitFlutterVideo(video) {
+    var local = videoIsLocalPreview(video) || (window.vcomVideoIsLocal && window.vcomVideoIsLocal(video));
+    if (local) {
+      var measured = measuredPip(video);
+      var box = lockPip(video, measured || fallbackPip(), !measured);
+      pinCallVideo(video, box, true);
+      return;
+    }
+    pinCallVideo(video, farBox(), false);
   }
   window.vcomLiftCallVideos = function () {
     ensureVideoSkin();
@@ -516,7 +635,7 @@
       var video = nodes[i];
       var stream = video.srcObject;
       if (!window.vcomCallHasVideo(stream)) {
-        if (video.__vcomLifted || (video.getAttribute && (video.getAttribute("data-vcom-lifted") === "1" || video.getAttribute("data-vcom-kind")))) {
+        if (video.__vcomPinned || video.__vcomPinSig || video.__vcomLifted || (video.getAttribute && (video.getAttribute("data-vcom-pinned") === "1" || video.getAttribute("data-vcom-lifted") === "1" || video.getAttribute("data-vcom-kind")))) {
           window.vcomHideLiftedVideo(video);
         }
         continue;
@@ -1050,7 +1169,7 @@
     return route;
   };
   function ringbackEl() {
-    var el = document.getElementById("vcom-guest-caller") || document.getElementById("vcom-ringback");
+    var el = document.getElementById("vcom-ringback");
     if (el) return el;
     el = document.createElement("audio");
     el.id = "vcom-ringback";
@@ -1074,7 +1193,10 @@
     });
     window.__vcomLoopPcs = [];
   }
-  function attachVoiceLoopback(localStream, el) {
+  function ringbackLive(gen) {
+    return !!window.__vcomRingbackOn && gen === window.__vcomRingbackGen;
+  }
+  function attachVoiceLoopback(localStream, el, gen) {
     closeLoopback();
     if (!el || !localStream) return;
     try { el.removeAttribute("src"); el.src = ""; } catch (eSrc) {}
@@ -1091,6 +1213,10 @@
       outgoing.addTrack(track, localStream);
     });
     incoming.ontrack = function (event) {
+      if (!ringbackLive(gen)) {
+        try { if (event.track && event.track.stop) event.track.stop(); } catch (eLate) {}
+        return;
+      }
       var remote = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
       el.srcObject = remote;
       el.__vcomRingbackStream = remote;
@@ -1117,13 +1243,16 @@
     }).then(function () {
       return outgoing.setRemoteDescription(incoming.localDescription);
     }).catch(function () {
+      if (!ringbackLive(gen)) return;
       el.srcObject = localStream;
       el.__vcomRingbackStream = localStream;
       window.__vcomRingbackKind = "mediastream";
+      var play = el.play && el.play();
+      if (play && play.catch) play.catch(function () {});
     });
   }
-  function ensureRingbackStream(el) {
-    if (el && el.srcObject && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream && window.__vcomRingbackDest) {
+  function ensureRingbackStream(el, gen) {
+    if (el && el.srcObject && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream && window.__vcomRingbackDest && ringbackLive(gen)) {
       return window.__vcomRingbackDest;
     }
     var Ctx = window.AudioContext || window.webkitAudioContext;
@@ -1145,10 +1274,13 @@
     if (typeof ctx.createMediaStreamDestination !== "function") return null;
     var dest = ctx.createMediaStreamDestination();
     window.__vcomRingbackDest = dest;
-    attachVoiceLoopback(dest.stream, el);
+    attachVoiceLoopback(dest.stream, el, gen);
     return dest;
   }
   function startVoiceRingback() {
+    if (window.__vcomRingbackOn && window.__vcomRingbackTimer) return;
+    var gen = (window.__vcomRingbackGen || 0) + 1;
+    window.__vcomRingbackGen = gen;
     if (window.vcomSetEarpieceDefault) window.vcomSetEarpieceDefault();
     else if (!window.__vcomSpeakerTouched) {
       window.__vcomSpeaker = false;
@@ -1156,13 +1288,16 @@
     }
     window.__vcomRingbackOn = true;
     var el = ringbackEl();
-    if (el && el.srcObject && !el.__vcomRingbackStream) return;
-    var dest = ensureRingbackStream(el);
+    if (el) {
+      el.__vcomRingbackEl = true;
+      try { el.muted = false; } catch (eMute) {}
+    }
+    var dest = ensureRingbackStream(el, gen);
     window.vcomApplyCallAudioRoute(el);
     var play = el && el.play && el.play();
     if (play && play.catch) play.catch(function () {});
     function beep() {
-      if (!window.__vcomRingbackOn) return;
+      if (!ringbackLive(gen)) return;
       var ctx = window.__vcomRingbackCtx;
       dest = window.__vcomRingbackDest || dest;
       if (!ctx || !dest) return;
@@ -1190,24 +1325,51 @@
   }
   window.vcomStartRingback = startVoiceRingback;
   window.__vcomVoiceRingback = startVoiceRingback;
+  function silenceRingbackElement(el) {
+    if (!el) return;
+    var dedicated = !!(el.__vcomRingbackEl || el.id === "vcom-ringback");
+    try { el.pause(); } catch (eP) {}
+    if (dedicated) {
+      try { el.autoplay = false; el.muted = true; } catch (eMute) {}
+    }
+    var stream = el.__vcomRingbackStream;
+    var current = el.srcObject;
+    if (stream && current === stream && stream.getTracks) {
+      try { stream.getTracks().forEach(function (track) { try { track.stop(); } catch (eTrack) {} }); } catch (eTracks) {}
+    }
+    if (dedicated || (stream && current === stream)) {
+      try { el.srcObject = null; } catch (eSrc) {}
+    }
+    el.__vcomRingbackStream = null;
+  }
   window.vcomStopRingback = function () {
     window.__vcomRingbackOn = false;
+    window.__vcomRingbackGen = (window.__vcomRingbackGen || 0) + 1;
     if (window.__vcomRingbackTimer) {
       clearInterval(window.__vcomRingbackTimer);
       window.__vcomRingbackTimer = null;
     }
     closeRingbackGraph();
     closeLoopback();
-    var el = document.getElementById("vcom-guest-caller") || document.getElementById("vcom-ringback");
-    if (el && el.__vcomRingbackStream && el.srcObject === el.__vcomRingbackStream) {
-      try { el.pause(); } catch (eP) {}
-      el.srcObject = null;
-      el.__vcomRingbackStream = null;
+    silenceRingbackElement(document.getElementById("vcom-ringback"));
+    silenceRingbackElement(document.getElementById("vcom-guest-caller"));
+    var tones = document.querySelectorAll ? document.querySelectorAll("audio") : [];
+    for (var i = 0; i < tones.length; i++) {
+      var src = "";
+      try { src = String(tones[i].currentSrc || tones[i].src || ""); } catch (eSrc) {}
+      if (/ringback|call_waiting/.test(src) || tones[i].__vcomRingbackStream) {
+        silenceRingbackElement(tones[i]);
+        try { tones[i].pause(); tones[i].currentTime = 0; } catch (eTone) {}
+      }
     }
     if (window.__vcomRingbackCtx && window.__vcomRingbackCtx.close) {
       try { window.__vcomRingbackCtx.close(); } catch (eClose) {}
       window.__vcomRingbackCtx = null;
       window.__vcomRingbackDest = null;
+    }
+    if (window.__vcomToneCtx && window.__vcomToneCtx.close) {
+      try { window.__vcomToneCtx.close(); } catch (eToneCtx) {}
+      window.__vcomToneCtx = null;
     }
   };
   window.vcomRouteRingback = function () {
