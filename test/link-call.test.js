@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid11"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid12"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -244,9 +244,12 @@ test("the side menu drops the handset and closes the link form with the drawer",
 test("chat messages can carry a voice note, a photo, or a video", function () {
   const src = fs.readFileSync(LINK, "utf8");
   assert.match(src, /data-mic aria-label="הקלטה"/);
-  assert.match(src, /data-options aria-label="אפשרויות"/);
+  assert.match(src, /data-plus aria-label="הוספה"/);
+  assert.equal(src.includes("vcom-chat-options"), false);
   assert.match(src, /data-gallery>שליחת תמונה מהגלריה/);
   assert.match(src, /data-capture>צילום תמונה \/ סרטון/);
+  assert.match(src, /top:8px;left:8px;z-index:3/);
+  assert.match(src, />Chatcom</);
   assert.equal(src.includes('data-camera'), false);
   assert.equal(src.includes("vcom-chat-tools"), false);
   assert.match(src, /textContent = "מחק"/);
@@ -272,6 +275,22 @@ test("chat messages can carry a voice note, a photo, or a video", function () {
   assert.equal(w.vcomComposerOnScreen([{ label: "הודעה", visible: true }]), true);
   assert.equal(w.vcomComposerOnScreen([{ label: "", role: "textbox", visible: true, bottom: true }]), true);
   assert.equal(w.vcomComposerOnScreen([{ label: "", role: "textbox", visible: true, bottom: false }]), false);
+  assert.equal(w.vcomChatOverlayOpen(false, false, true, Date.now(), Date.now()), false);
+  assert.equal(w.vcomChatOverlayOpen(true, true, false, 0, Date.now()), true);
+  assert.equal(w.vcomChatOverlayOpen(true, false, false, Date.now(), Date.now()), false);
+  assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now() - 5000, Date.now()), false);
+  assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now(), Date.now()), true);
+  assert.equal(w.vcomChatOverlayOpen(true, false, true, 0, Date.now()), true);
+  assert.equal(w.vcomCallShouldRelay("failed", false), true);
+  assert.equal(w.vcomCallShouldRelay("disconnected", false), true);
+  assert.equal(w.vcomCallShouldRelay("failed", true), false);
+  assert.equal(w.vcomCallShouldRelay("connected", false), false);
+  assert.equal(w.vcomCallShouldRelay("completed", false), false);
+  const relayed = { restartIce: function () { this.restarted = true; }, setConfiguration: function (cfg) { this.cfg = cfg; } };
+  assert.equal(w.vcomRecoverCall(relayed, [{ urls: "turn:example" }]), true);
+  assert.equal(relayed.restarted, true);
+  assert.equal(relayed.cfg.iceTransportPolicy, "relay");
+  assert.equal(w.vcomRecoverCall(relayed, []), false);
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("image", "https://example.com/a.jpg")), "תמונה");
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("audio", "https://example.com/a.webm")), "הודעה קולית");
   assert.equal(w.vcomMediaLabel(w.vcomEncodeMedia("video", "https://example.com/a.mp4")), "סרטון");
