@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid11";
+  window.__VCOM_LINK_BUILD = "vid12";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -19,7 +19,11 @@
           "turn:openrelay.metered.ca:80?transport=udp",
           "turn:openrelay.metered.ca:80?transport=tcp",
           "turn:openrelay.metered.ca:443?transport=tcp",
-          "turns:openrelay.metered.ca:443?transport=tcp"
+          "turns:openrelay.metered.ca:443?transport=tcp",
+          "turn:global.relay.metered.ca:80?transport=udp",
+          "turn:global.relay.metered.ca:80?transport=tcp",
+          "turn:global.relay.metered.ca:443?transport=tcp",
+          "turns:global.relay.metered.ca:443?transport=tcp"
         ],
         username: "openrelayproject",
         credential: "openrelayproject"
@@ -1194,6 +1198,27 @@
     if (chatTab == null || chatTab === "") return false;
     return (tab | 0) === (chatTab | 0);
   };
+  window.vcomChatOverlayOpen = function (chatOpen, grouped, composer, stamped, now) {
+    if (grouped) return true;
+    if (!chatOpen) return false;
+    if (composer === false) return false;
+    var fresh = !!stamped && (now - stamped) < 400;
+    return !!(fresh || (!stamped && composer === true));
+  };
+  window.vcomCallShouldRelay = function (iceState, relayed) {
+    if (relayed) return false;
+    return iceState === "failed" || iceState === "disconnected";
+  };
+  window.vcomRecoverCall = function (pc, iceServers) {
+    if (!pc || pc.__vcomRelay || typeof pc.restartIce !== "function") return false;
+    pc.__vcomRelay = true;
+    try {
+      if (typeof pc.setConfiguration === "function") {
+        pc.setConfiguration({ iceServers: iceServers || [], iceTransportPolicy: "relay" });
+      }
+    } catch (eSet) {}
+    try { pc.restartIce(); return true; } catch (eIce) { return false; }
+  };
   window.vcomCloseSideMenu = function () {
     var state = window.__vcomDrawerState;
     if (state && typeof state.aJ === "function") {
@@ -2015,7 +2040,20 @@
         fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
       }
       if (wasConnected && (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed")) {
-        if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
+        if (pc.connectionState !== "closed" && window.vcomCallShouldRelay(pc.connectionState === "failed" ? "failed" : "disconnected", !!pc.__vcomRelay)) {
+          window.vcomRecoverCall(pc, ICE.iceServers);
+        }
+        if (pc.__vcomEndTimer) return;
+        if (pc.connectionState === "closed") {
+          if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
+          return;
+        }
+        pc.__vcomEndTimer = setTimeout(function () {
+          pc.__vcomEndTimer = 0;
+          if (state.closed) return;
+          if (pc.connectionState === "connected" || pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") return;
+          if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
+        }, 8000);
       }
     };
     mediaPromise.then(function (stream) {
@@ -2061,7 +2099,7 @@
     var menu = document.createElement("div");
     menu.id = "vcom-link-menu";
     menu.hidden = true;
-    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><button id="vcom-chatcom" type="button"><span class="vcom-link-open-text">Chatcom</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
     document.body.appendChild(menu);
     var logo = document.createElement("img");
     logo.id = "vcom-menu-logo";
@@ -2281,6 +2319,10 @@
       if (on) nameInput.focus();
     }
     open.addEventListener("click", function () { showForm(!composing); });
+    var chatcom = menu.querySelector("#vcom-chatcom");
+    if (chatcom) chatcom.addEventListener("click", function () {
+      if (window.vcomOpenChatcom) window.vcomOpenChatcom();
+    });
     var okButton = form.querySelector("[data-ok]");
     function newestExpiry() {
       var max = 0;
@@ -2486,7 +2528,8 @@
           if (!changed) return;
           if ((window.__vcomDrawerX || 0) > 0.2) window.vcomCloseSideMenu();
           var media = document.getElementById("vcom-chat-media");
-          if (media && (next !== (window.__vcomChatTab | 0) || !window.__vcomOpenChat)) {
+          if (!window.__vcomGroupId && media && (next !== (window.__vcomChatTab | 0) || !window.__vcomOpenChat)) {
+            window.__vcomComposerAt = 0;
             media.hidden = true;
             var sheetNow = document.getElementById("vcom-chat-sheet");
             if (sheetNow) sheetNow.hidden = true;
@@ -2710,6 +2753,7 @@
     pc.oniceconnectionstatechange = function () {
       if (current.closed || token !== window.__vcomGuestToken) return;
       if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") markConnected();
+      if (window.vcomCallShouldRelay(pc.iceConnectionState, !!pc.__vcomRelay)) window.vcomRecoverCall(pc, ICE.iceServers);
     };
     current.unsub = fs.onSnapshot(ref, function (snap) {
       if (current.closed || token !== window.__vcomGuestToken) return;
@@ -2805,11 +2849,16 @@
     var root = document.createElement("div");
     root.id = "vcom-chat-media";
     root.hidden = true;
-    root.innerHTML = '<div id="vcom-chat-thread"></div><button type="button" id="vcom-chat-options" data-options aria-label="אפשרויות">אפשרויות</button><div id="vcom-chat-sheet" hidden><button type="button" data-gallery>שליחת תמונה מהגלריה</button><button type="button" data-capture>צילום תמונה / סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
+    root.innerHTML = '<div id="vcom-group-head" hidden><button type="button" data-group-back aria-label="חזרה">→</button><div><strong data-group-name>Chatcom</strong><small data-group-meta></small></div></div><div id="vcom-chat-thread"></div><button type="button" id="vcom-chat-plus" data-plus aria-label="הוספה">+</button><div id="vcom-chat-sheet" hidden><button type="button" data-gallery>שליחת תמונה מהגלריה</button><button type="button" data-capture>צילום תמונה / סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><div id="vcom-group-compose" hidden><button type="button" data-group-send aria-label="שליחה">➤</button><input id="vcom-group-text" maxlength="2000" enterkeyhint="send" placeholder="הודעה"></div><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
     document.body.appendChild(root);
     var thread = root.querySelector("#vcom-chat-thread");
     var sheet = root.querySelector("#vcom-chat-sheet");
-    var options = root.querySelector("[data-options]");
+    var plus = root.querySelector("[data-plus]");
+    var groupHead = root.querySelector("#vcom-group-head");
+    var groupName = root.querySelector("[data-group-name]");
+    var groupMeta = root.querySelector("[data-group-meta]");
+    var groupCompose = root.querySelector("#vcom-group-compose");
+    var groupText = root.querySelector("#vcom-group-text");
     var status = root.querySelector("#vcom-chat-media-status");
     var recLabel = root.querySelector("#vcom-chat-rec");
     var mic = root.querySelector("[data-mic]");
@@ -3047,6 +3096,39 @@
         status.textContent = err && err.message === "big" ? "הקובץ גדול מדי" : "לא הצלחנו לשלוח";
       }).then(function () { sending = false; });
     }
+    function sendText(raw) {
+      var text = String(raw || "").replace(/^\s+|\s+$/g, "");
+      var chatId = window.__vcomOpenChat;
+      var user = currentUser();
+      if (!chatId || !user || !text || sending) return;
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.doc || !fs.setDoc || !fs.getFirestore) {
+        status.textContent = "לא הצלחנו לשלוח";
+        return;
+      }
+      sending = true;
+      status.textContent = "";
+      var db = fs.getFirestore();
+      var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
+      var messageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      fs.setDoc(fs.doc(db, "chats", chatId, "messages", messageId), {
+        senderId: user.uid,
+        text: text,
+        type: "text",
+        createdAt: when
+      }).then(function () {
+        return fs.updateDoc(fs.doc(db, "chats", chatId), {
+          lastMessage: text.slice(0, 80),
+          lastMessageAt: when,
+          updatedAt: when,
+          lastSenderId: user.uid
+        }).catch(function () {});
+      }).then(function () {
+        status.textContent = "";
+      }).catch(function () {
+        status.textContent = "לא הצלחנו לשלוח";
+      }).then(function () { sending = false; });
+    }
     function takeFile(input, kind) {
       input.value = "";
       input.onchange = function () {
@@ -3113,7 +3195,7 @@
     mic.addEventListener("pointerdown", beginHold);
     mic.addEventListener("pointerup", endHold);
     mic.addEventListener("pointercancel", endHold);
-    options.addEventListener("click", function (event) {
+    plus.addEventListener("click", function (event) {
       event.preventDefault();
       sheet.hidden = !sheet.hidden;
     });
@@ -3130,7 +3212,7 @@
     document.addEventListener("pointerdown", function (event) {
       if (sheet.hidden) return;
       var target = event.target;
-      if (target && target.closest && (target.closest("#vcom-chat-sheet") || target.closest("[data-options]"))) return;
+      if (target && target.closest && (target.closest("#vcom-chat-sheet") || target.closest("[data-plus]"))) return;
       sheet.hidden = true;
     }, true);
     var pressTimer = 0;
@@ -3207,10 +3289,187 @@
       }
       return labels;
     }
+    function showGroup(id, name, count) {
+      window.__vcomGroupId = id;
+      window.__vcomGroupName = name || "Chatcom";
+      window.__vcomOpenChat = id;
+      window.__vcomChatTab = window.__vcomTab | 0;
+      if (groupName) groupName.textContent = window.__vcomGroupName;
+      if (groupMeta) groupMeta.textContent = count ? (count + " משתתפים") : "";
+      root.classList.add("group");
+      if (groupHead) groupHead.hidden = false;
+      if (groupCompose) groupCompose.hidden = false;
+      root.hidden = false;
+      sheet.hidden = true;
+      watch(id);
+    }
+    function closeGroup() {
+      var id = window.__vcomGroupId || "";
+      window.__vcomGroupId = "";
+      window.__vcomGroupName = "";
+      if (id && window.__vcomOpenChat === id) window.__vcomOpenChat = "";
+      root.classList.remove("group");
+      if (groupHead) groupHead.hidden = true;
+      if (groupCompose) groupCompose.hidden = true;
+      if (groupText) groupText.value = "";
+      sheet.hidden = true;
+      root.hidden = true;
+      if (hold) endHold();
+      if (watched) watch("");
+    }
+    if (root.querySelector("[data-group-back]")) {
+      root.querySelector("[data-group-back]").addEventListener("click", closeGroup);
+    }
+    if (root.querySelector("[data-group-send]")) {
+      root.querySelector("[data-group-send]").addEventListener("click", function () {
+        sendText(groupText && groupText.value);
+        if (groupText) groupText.value = "";
+      });
+    }
+    if (groupText) {
+      groupText.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        sendText(groupText.value);
+        groupText.value = "";
+      });
+    }
+    var picker = document.createElement("section");
+    picker.id = "vcom-chatcom-new";
+    picker.hidden = true;
+    picker.innerHTML = '<header><button type="button" data-close aria-label="סגירה">→</button><b>Chatcom</b></header><input id="vcom-group-title" maxlength="40" placeholder="שם הקבוצה"><div id="vcom-group-contacts"></div><p data-group-error></p><button type="button" data-create>פתיחת צ\'אט</button>';
+    document.body.appendChild(picker);
+    var pickerError = picker.querySelector("[data-group-error]");
+    var pickerList = picker.querySelector("#vcom-group-contacts");
+    var pickerTitle = picker.querySelector("#vcom-group-title");
+    function linePhone(value) {
+      var d = String(value || "").replace(/\D/g, "");
+      if (/^020\d{6}$/.test(d)) return d;
+      if (/^20\d{6}$/.test(d)) return "0" + d;
+      return "";
+    }
+    function loadContacts() {
+      if (pickerList) pickerList.replaceChildren();
+      if (pickerError) pickerError.textContent = "";
+      var fs = window.firebase_firestore;
+      var user = currentUser();
+      if (!fs || !user || !fs.getDocs || !fs.collection || !fs.getFirestore) {
+        if (pickerError) pickerError.textContent = "לא הצלחנו לטעון אנשי קשר";
+        return;
+      }
+      fs.getDocs(fs.collection(fs.getFirestore(), "users", user.uid, "contacts")).then(function (snap) {
+        var docs = snap && snap.docs ? snap.docs : [];
+        if (!docs.length) {
+          if (pickerError) pickerError.textContent = "אין אנשי קשר";
+          return;
+        }
+        docs.forEach(function (docSnap) {
+          var data = docSnap.data ? docSnap.data() : {};
+          var phone = linePhone(data && data.phoneNumber);
+          if (!phone) return;
+          var row = document.createElement("label");
+          var box = document.createElement("input");
+          box.type = "checkbox";
+          box.dataset.phone = phone;
+          box.dataset.person = data && data.name || phone;
+          var caption = document.createElement("span");
+          caption.textContent = (data && data.name || phone) + "  " + phone;
+          row.appendChild(box);
+          row.appendChild(caption);
+          pickerList.appendChild(row);
+        });
+        if (!pickerList.childNodes.length && pickerError) pickerError.textContent = "אין אנשי קשר";
+      }).catch(function () {
+        if (pickerError) pickerError.textContent = "לא הצלחנו לטעון אנשי קשר";
+      });
+    }
+    function memberUser(fs, db, phone) {
+      return fs.getDoc(fs.doc(db, "phoneNumbers", phone)).then(function (snap) {
+        var data = snap && snap.exists && snap.exists() && snap.data ? snap.data() : null;
+        return data && data.userId || "";
+      }).catch(function () { return ""; });
+    }
+    function createGroup() {
+      var name = pickerTitle ? String(pickerTitle.value || "").replace(/^\s+|\s+$/g, "") : "";
+      if (!name) {
+        if (pickerError) pickerError.textContent = "נא לרשום שם לקבוצה";
+        return;
+      }
+      var chosen = [];
+      var boxes = pickerList ? pickerList.querySelectorAll("input") : [];
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].checked) chosen.push({ phone: boxes[i].dataset.phone, name: boxes[i].dataset.person || boxes[i].dataset.phone });
+      }
+      if (!chosen.length) {
+        if (pickerError) pickerError.textContent = "נא לבחור אנשי קשר";
+        return;
+      }
+      var fs = window.firebase_firestore;
+      var user = currentUser();
+      if (!fs || !user || !fs.getDoc || !fs.setDoc) {
+        if (pickerError) pickerError.textContent = "לא הצלחנו לפתוח את הקבוצה";
+        return;
+      }
+      if (pickerError) pickerError.textContent = "";
+      var db = fs.getFirestore();
+      Promise.all(chosen.map(function (person) {
+        return memberUser(fs, db, person.phone).then(function (uid) {
+          return { phone: person.phone, name: person.name, uid: uid };
+        });
+      })).then(function (people) {
+        var ids = [user.uid];
+        var phones = {};
+        var names = {};
+        people.forEach(function (person) {
+          if (!person.uid || person.uid === user.uid || ids.indexOf(person.uid) >= 0) return;
+          ids.push(person.uid);
+          phones[person.uid] = person.phone;
+          names[person.uid] = name;
+        });
+        if (ids.length < 2) throw new Error("missing");
+        ids.sort();
+        names[user.uid] = name;
+        var id = "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
+        return fs.setDoc(fs.doc(db, "chats", id), {
+          participantIds: ids,
+          participantPhones: phones,
+          peerNames: names,
+          groupName: name,
+          isGroup: true,
+          lastMessage: name,
+          lastMessageAt: when,
+          updatedAt: when,
+          createdAt: when,
+          lastSenderId: user.uid
+        }).then(function () {
+          return { id: id, name: name, count: ids.length };
+        });
+      }).then(function (group) {
+        picker.hidden = true;
+        if (pickerTitle) pickerTitle.value = "";
+        showGroup(group.id, group.name, group.count);
+      }).catch(function () {
+        if (pickerError) pickerError.textContent = "לא נמצא מנוי ברשימה";
+      });
+    }
+    if (picker.querySelector("[data-close]")) picker.querySelector("[data-close]").addEventListener("click", function () { picker.hidden = true; });
+    if (picker.querySelector("[data-create]")) picker.querySelector("[data-create]").addEventListener("click", createGroup);
+    window.vcomOpenChatcom = function () {
+      if (window.vcomCloseSideMenu) window.vcomCloseSideMenu();
+      if (pickerTitle) pickerTitle.value = "";
+      picker.hidden = false;
+      loadContacts();
+    };
     setInterval(function () {
       if (document.hidden) return;
-      var composer = window.vcomComposerOnScreen(composerLabels());
-      var open = chatOpen() && composer !== false;
+      var grouped = !!window.__vcomGroupId;
+      var composer = grouped ? null : window.vcomComposerOnScreen(composerLabels());
+      var open = window.vcomChatOverlayOpen(chatOpen(), grouped, composer, window.__vcomComposerAt || 0, Date.now());
+      root.classList.toggle("group", grouped);
+      if (groupHead) groupHead.hidden = !grouped;
+      if (groupCompose) groupCompose.hidden = !grouped;
+      if (grouped && groupName) groupName.textContent = window.__vcomGroupName || "Chatcom";
       root.hidden = !open;
       if (!open) {
         sheet.hidden = true;
@@ -3222,9 +3481,9 @@
         if (watched) watch("");
         return;
       }
-      var id = window.__vcomOpenChat || "";
+      var id = grouped ? window.__vcomGroupId : (window.__vcomOpenChat || "");
       if (id !== watched) watch(id);
-    }, 700);
+    }, 300);
   }
   function issuerCss() {
     return ""
@@ -3234,6 +3493,7 @@
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
       + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chatcom{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#1C1C1E}"
       + ".vcom-link-open-icon svg{display:block}"
       + ".vcom-link-open-text{font-weight:600}"
@@ -3259,19 +3519,38 @@
       + ".vcom-bubble.plain time{color:#8E8E93;opacity:1}"
       + ".vcom-voice{min-height:44px;border:0;border-radius:12px;background:transparent;color:inherit;font:600 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:8px 12px}"
       + ".vcom-bubble time{align-self:flex-end;opacity:.75;font-size:11px;padding:2px 6px 0}"
-      + ".vcom-bubble [data-delete]{display:none;position:absolute;top:-18px;left:8px;border:0;border-radius:10px;background:#FF3B30;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:32px;padding:0 10px}"
+      + ".vcom-bubble [data-delete]{display:none;position:absolute;top:8px;left:8px;z-index:3;border:0;border-radius:10px;background:#FF3B30;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:32px;padding:0 10px;box-shadow:0 1px 4px rgba(0,0,0,.25)}"
       + ".vcom-bubble.ask [data-delete]{display:block}"
-      + "#vcom-chat-options{position:fixed;z-index:38;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);height:36px;padding:0 12px;border:1px solid #E5E5EA;border-radius:18px;background:#fff;color:#3A3A3C;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.06)}"
-      + "#vcom-chat-sheet{position:fixed;z-index:39;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);display:flex;flex-direction:column;min-width:220px;background:#fff;border:1px solid #E5E5EA;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.12);overflow:hidden;direction:rtl}"
+      + "#vcom-chat-plus{position:fixed;z-index:38;left:56px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:42px;height:42px;border:1px solid #E5E5EA;border-radius:50%;background:#fff;color:#3A3A3C;font:500 28px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.06)}"
+      + "#vcom-chat-sheet{position:fixed;z-index:39;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 60px);display:flex;flex-direction:column;min-width:220px;background:#fff;border:1px solid #E5E5EA;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.12);overflow:hidden;direction:rtl}"
       + "#vcom-chat-sheet[hidden]{display:none!important}"
       + "#vcom-chat-sheet button{min-height:48px;border:0;border-bottom:1px solid #F2F2F7;background:#fff;color:#1C1C1E;text-align:right;padding:12px 16px;font:600 15px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + "#vcom-chat-sheet button:last-child{border-bottom:0}"
       + "#vcom-chat-mic{position:fixed;z-index:38;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:42px;height:42px;border:0;border-radius:50%;background:#007AFF;color:#fff;display:grid;place-items:center;padding:0;touch-action:none}"
       + "#vcom-chat-mic svg{display:block}"
       + "#vcom-chat-mic.rec{background:#FF3B30}"
-      + "#vcom-chat-rec{position:fixed;z-index:38;left:58px;right:108px;bottom:calc(env(safe-area-inset-bottom,0px) + 20px);margin:0;color:#FF3B30;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right;pointer-events:none}"
+      + "#vcom-chat-rec{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);margin:0;color:#FF3B30;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right;pointer-events:none}"
       + "#vcom-chat-rec[hidden]{display:none!important}"
-      + "#vcom-chat-media-status{position:fixed;z-index:38;left:56px;right:108px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);margin:0;color:#C62828;font-size:13px;text-align:center;pointer-events:none}";
+      + "#vcom-chat-media-status{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);margin:0;color:#C62828;font-size:13px;text-align:center;pointer-events:none}"
+      + "#vcom-group-head{position:fixed;z-index:40;left:0;right:0;top:0;height:calc(env(safe-area-inset-top,0px) + 56px);padding:env(safe-area-inset-top,0px) 8px 0;box-sizing:border-box;background:#fff;display:flex;direction:rtl;align-items:flex-end;gap:8px;border-bottom:1px solid #E5E5EA}"
+      + "#vcom-group-head[hidden],#vcom-group-compose[hidden]{display:none!important}"
+      + "#vcom-group-head button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
+      + "#vcom-group-head strong{display:block;color:#1C1C1E;font-size:17px}"
+      + "#vcom-group-head small{display:block;color:#8E8E93;font-size:12px}"
+      + "#vcom-chat-media.group #vcom-chat-thread{top:calc(env(safe-area-inset-top,0px) + 56px);bottom:calc(env(safe-area-inset-bottom,0px) + 72px)}"
+      + "#vcom-group-compose{position:fixed;z-index:38;left:108px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);height:46px;display:flex;direction:ltr;align-items:center;gap:6px}"
+      + "#vcom-group-compose button{width:40px;height:40px;border:0;border-radius:50%;background:#007AFF;color:#fff;font-size:18px}"
+      + "#vcom-group-text{flex:1;height:40px;border:0;border-radius:20px;background:#fff;padding:0 14px;font:16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;direction:rtl}"
+      + "#vcom-chatcom-new{position:fixed;z-index:92;inset:0;background:#F2F2F7;direction:rtl;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top,0px) + 8px) 16px calc(env(safe-area-inset-bottom,0px) + 16px);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chatcom-new[hidden]{display:none!important}"
+      + "#vcom-chatcom-new header{display:flex;align-items:center;gap:8px;min-height:48px}"
+      + "#vcom-chatcom-new header button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
+      + "#vcom-chatcom-new header b{font-size:20px;font-weight:600}"
+      + "#vcom-group-title{height:48px;border:0;border-radius:12px;background:#fff;padding:0 14px;font-size:16px}"
+      + "#vcom-group-contacts{flex:1;overflow:auto;margin:12px 0;display:flex;flex-direction:column;gap:8px}"
+      + "#vcom-group-contacts label{display:flex;align-items:center;gap:10px;background:#fff;border-radius:12px;padding:12px;font-size:16px}"
+      + "#vcom-chatcom-new [data-group-error]{min-height:20px;margin:0 0 8px;color:#C62828;font-size:14px}"
+      + "#vcom-chatcom-new [data-create]{min-height:48px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 17px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}";
   }
   function guestCss() {
     return ""
