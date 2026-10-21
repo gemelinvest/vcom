@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid15"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid16"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -827,4 +827,57 @@ test("account status reads one summary and a plan choice is one write", function
   assert.equal(writes, 1);
   assert.equal(w.vcomRecordCallUse(42, true), false);
   assert.equal(writes, 1);
+});
+
+test("incoming ring vibrates and covers the circle with the glass whistle", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /window\.vcomStartVibrate = function/);
+  assert.match(src, /window\.vcomStopVibrate = function/);
+  assert.match(src, /navigator\.vibrate\(0\)/);
+  assert.match(src, /id = "vcom-incoming-whistle"/);
+  assert.match(src, /\/icons\/vcom-splash\.png/);
+  const w = loadLink();
+  const box = w.vcomIncomingWhistleBox(100, 278, 200);
+  assert.equal(Math.round(box.size), 118);
+  assert.equal(Math.round(box.top), 128);
+  assert.equal(Math.round(box.left), 141);
+  const scaled = w.vcomIncomingWhistleBox(40, 396, 180);
+  assert.equal(Math.round(scaled.size), 236);
+  const pulses = [];
+  w.navigator.vibrate = function (pattern) { pulses.push(pattern); return true; };
+  const made = [];
+  const origCreate = w.document.createElement;
+  w.document.createElement = function () {
+    const node = origCreate();
+    made.push(node);
+    return node;
+  };
+  const title = {
+    getAttribute: function (name) { return name === "aria-label" ? "שיחה נכנסת" : ""; },
+    getBoundingClientRect: function () { return { top: 80, bottom: 100, left: 120, right: 280, width: 160, height: 20 }; }
+  };
+  const phone = {
+    getAttribute: function (name) { return name === "aria-label" ? "020-937289" : ""; },
+    getBoundingClientRect: function () { return { top: 278, bottom: 300, left: 140, right: 260, width: 120, height: 22 }; }
+  };
+  const host = { querySelectorAll: function () { return [title, phone]; } };
+  w.document.querySelector = function (sel) { return sel === "flt-semantics-host" ? host : null; };
+  w.vcomStartVibrate();
+  assert.equal(w.__vcomVibrating, true);
+  assert.equal(pulses.length, 1);
+  assert.equal(pulses[0][0], 500);
+  w.vcomStartVibrate();
+  assert.equal(pulses.length, 1);
+  const img = made.filter(function (node) { return node.id === "vcom-incoming-whistle"; })[0];
+  assert.ok(img);
+  assert.equal(img.hidden, false);
+  assert.equal(img.style.width, "118px");
+  assert.equal(img.style.height, "118px");
+  assert.equal(img.style.top, "128px");
+  assert.equal(img.style.left, "141px");
+  assert.match(img.src, /vcom-splash\.png/);
+  w.vcomStopVibrate();
+  assert.equal(w.__vcomVibrating, false);
+  assert.equal(img.hidden, true);
+  assert.equal(pulses[pulses.length - 1], 0);
 });
