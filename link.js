@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid9";
+  window.__VCOM_LINK_BUILD = "vid10";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1176,6 +1176,12 @@
     var view = Number(point.viewWidth) || 0;
     var inDrawer = rtl ? x > view - width : x < width;
     return !inDrawer;
+  };
+  window.vcomChatSurfaceOpen = function (chat, tab, chatTab, blocked) {
+    if (!chat) return false;
+    if (blocked) return false;
+    if (chatTab == null || chatTab === "") return false;
+    return (tab | 0) === (chatTab | 0);
   };
   window.vcomCloseSideMenu = function () {
     var state = window.__vcomDrawerState;
@@ -2778,14 +2784,15 @@
 
   function wireChatMedia() {
     if (document.getElementById("vcom-chat-media")) return;
-    var bar = document.createElement("div");
-    bar.id = "vcom-chat-media";
-    bar.hidden = true;
-    bar.innerHTML = '<div id="vcom-chat-media-tray"></div><div id="vcom-chat-media-actions"><button type="button" data-mic>קול</button><button type="button" data-camera>מצלמה</button><button type="button" data-gallery>גלריה</button><button type="button" data-video>סרטון</button></div><p id="vcom-chat-media-status"></p>';
-    document.body.appendChild(bar);
-    var tray = bar.querySelector("#vcom-chat-media-tray");
-    var status = bar.querySelector("#vcom-chat-media-status");
-    var mic = bar.querySelector("[data-mic]");
+    var root = document.createElement("div");
+    root.id = "vcom-chat-media";
+    root.hidden = true;
+    root.innerHTML = '<div id="vcom-chat-thread"></div><div id="vcom-chat-tools"><button type="button" data-camera aria-label="מצלמה">מצלמה</button><button type="button" data-gallery aria-label="גלריה">גלריה</button><button type="button" data-video aria-label="סרטון">סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה">הקלטה</button><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
+    document.body.appendChild(root);
+    var thread = root.querySelector("#vcom-chat-thread");
+    var status = root.querySelector("#vcom-chat-media-status");
+    var recLabel = root.querySelector("#vcom-chat-rec");
+    var mic = root.querySelector("[data-mic]");
     var camera = document.createElement("input");
     camera.type = "file";
     camera.accept = "image/*";
@@ -2799,54 +2806,98 @@
     video.type = "file";
     video.accept = "video/*";
     video.hidden = true;
-    bar.appendChild(camera);
-    bar.appendChild(gallery);
-    bar.appendChild(video);
+    root.appendChild(camera);
+    root.appendChild(gallery);
+    root.appendChild(video);
     var watched = "";
     var unsub = null;
     var sending = false;
     var recorder = null;
+    var hold = false;
+    var startedAt = 0;
+    var messages = [];
+    var player = document.createElement("audio");
+    var playingId = "";
     function chatOpen() {
-      if (!window.__vcomOpenChat) return false;
-      if (window.__vcomRinging) return false;
+      var blocked = !!window.__vcomRinging || (window.__vcomDrawerX || 0) > 0.2;
       try {
         var view = window.__vcomBloc && window.__vcomBloc.c;
-        if (view && view.gnY && view.gnY()) return false;
-        if (view && view.b) return false;
+        if (view && view.gnY && view.gnY()) blocked = true;
+        if (view && view.b) blocked = true;
       } catch (eCall) {}
-      return (window.__vcomDrawerX || 0) < 0.2;
+      return window.vcomChatSurfaceOpen(window.__vcomOpenChat, window.__vcomTab, window.__vcomChatTab, blocked);
     }
-    function paint(items) {
-      tray.replaceChildren();
-      items.forEach(function (item) {
-        var node;
-        if (item.kind === "audio") {
-          node = document.createElement("audio");
-          node.controls = true;
-          node.src = item.url;
-        } else if (item.kind === "video") {
-          node = document.createElement("video");
-          node.controls = true;
-          node.playsInline = true;
-          node.src = item.url;
+    function clock(value) {
+      var ms = 0;
+      if (value && typeof value.toMillis === "function") ms = value.toMillis();
+      else if (value && typeof value.seconds === "number") ms = value.seconds * 1000;
+      if (!ms) return "";
+      var date = new Date(ms);
+      return ("0" + date.getHours()).slice(-2) + ":" + ("0" + date.getMinutes()).slice(-2);
+    }
+    function mine(senderId) {
+      var user = currentUser();
+      return !!(user && senderId === user.uid);
+    }
+    function paint() {
+      var nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
+      thread.replaceChildren();
+      messages.forEach(function (item) {
+        var bubble = document.createElement("div");
+        bubble.className = "vcom-bubble" + (item.mine ? " mine" : "");
+        bubble.dataset.id = item.id;
+        bubble.dataset.sender = item.senderId || "";
+        var body;
+        if (item.media && item.media.kind === "image") {
+          body = document.createElement("img");
+          body.alt = "";
+          body.src = item.media.url;
+        } else if (item.media && item.media.kind === "video") {
+          body = document.createElement("video");
+          body.controls = true;
+          body.playsInline = true;
+          body.src = item.media.url;
+        } else if (item.media && item.media.kind === "audio") {
+          body = document.createElement("button");
+          body.type = "button";
+          body.className = "vcom-voice" + (playingId === item.id ? " on" : "");
+          body.dataset.voice = item.id;
+          body.dataset.url = item.media.url;
+          body.textContent = playingId === item.id ? "מנגן" : "נגן הקלטה";
         } else {
-          node = document.createElement("img");
-          node.alt = "תמונה";
-          node.src = item.url;
+          body = document.createElement("p");
+          body.textContent = item.text || "";
         }
-        tray.appendChild(node);
+        var time = document.createElement("time");
+        time.textContent = item.time || "";
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.dataset.delete = item.id;
+        remove.textContent = "מחק";
+        bubble.appendChild(body);
+        bubble.appendChild(time);
+        bubble.appendChild(remove);
+        thread.appendChild(bubble);
       });
+      if (nearBottom) thread.scrollTop = thread.scrollHeight;
     }
     function readSnap(snap) {
-      var items = [];
+      var next = [];
       var docs = snap && snap.docs ? snap.docs : [];
-      docs.forEach(function (doc) {
-        var data = doc.data ? doc.data() : {};
-        var media = window.vcomParseMedia(data && data.text);
-        if (!media) return;
-        items.push({ kind: media.kind, url: media.url, at: window.asMillis ? 0 : 0, raw: data.createdAt });
+      docs.forEach(function (docSnap) {
+        var data = docSnap.data ? docSnap.data() : {};
+        var text = data && data.text || "";
+        next.push({
+          id: docSnap.id,
+          senderId: data && data.senderId || "",
+          text: text,
+          media: window.vcomParseMedia(text),
+          time: clock(data && data.createdAt),
+          raw: data && data.createdAt,
+          mine: mine(data && data.senderId)
+        });
       });
-      items.sort(function (a, b) {
+      next.sort(function (a, b) {
         function ms(value) {
           if (!value) return 0;
           if (typeof value.toMillis === "function") return value.toMillis();
@@ -2855,12 +2906,14 @@
         }
         return ms(a.raw) - ms(b.raw);
       });
-      paint(items.slice(-8));
+      messages = next;
+      paint();
     }
     function watch(chatId) {
       if (unsub) { try { unsub(); } catch (eUn) {} unsub = null; }
       watched = chatId || "";
-      tray.replaceChildren();
+      messages = [];
+      thread.replaceChildren();
       if (!watched) return;
       var fs = window.firebase_firestore;
       if (!fs || !fs.collection || !fs.onSnapshot || !fs.getFirestore) return;
@@ -2971,45 +3024,109 @@
       };
       input.click();
     }
-    mic.addEventListener("click", function () {
-      if (recorder && recorder.state === "recording") {
-        recorder.stop();
-        return;
-      }
+    function stopStream(stream) {
+      if (!stream) return;
+      stream.getTracks().forEach(function (track) { try { track.stop(); } catch (eStop) {} });
+    }
+    function beginHold(event) {
+      if (event.button != null && event.button !== 0) return;
+      if (recorder || sending) return;
+      event.preventDefault();
+      hold = true;
+      startedAt = Date.now();
+      recLabel.hidden = false;
+      mic.classList.add("rec");
+      try { mic.setPointerCapture(event.pointerId); } catch (eCap) {}
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder !== "function") {
+        hold = false;
+        recLabel.hidden = true;
+        mic.classList.remove("rec");
         status.textContent = "לא הצלחנו לשלוח";
         return;
       }
       window.__vcomIgnoreCapture = true;
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
         window.__vcomIgnoreCapture = false;
+        if (!hold) { stopStream(stream); return; }
         var chunks = [];
         recorder = new MediaRecorder(stream);
-        recorder.ondataavailable = function (event) { if (event.data && event.data.size) chunks.push(event.data); };
+        recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
         recorder.onstop = function () {
+          var keep = Date.now() - startedAt >= 450;
+          var mime = (recorder && recorder.mimeType) || "audio/webm";
           mic.classList.remove("rec");
-          mic.textContent = "קול";
-          stream.getTracks().forEach(function (track) { try { track.stop(); } catch (eStop) {} });
-          var blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-          blob.name = "voice.webm";
+          recLabel.hidden = true;
+          stopStream(stream);
           recorder = null;
-          sendFile(blob, "audio");
+          if (!keep) return;
+          sendFile(new Blob(chunks, { type: mime }), "audio");
         };
         recorder.start();
-        mic.classList.add("rec");
-        mic.textContent = "עצור";
-        status.textContent = "";
       }).catch(function () {
         window.__vcomIgnoreCapture = false;
+        hold = false;
+        mic.classList.remove("rec");
+        recLabel.hidden = true;
         status.textContent = "לא הצלחנו לשלוח";
       });
+    }
+    function endHold() {
+      hold = false;
+      if (recorder && recorder.state === "recording") recorder.stop();
+      else {
+        mic.classList.remove("rec");
+        recLabel.hidden = true;
+      }
+    }
+    mic.addEventListener("pointerdown", beginHold);
+    mic.addEventListener("pointerup", endHold);
+    mic.addEventListener("pointercancel", endHold);
+    root.querySelector("[data-camera]").addEventListener("click", function () { takeFile(camera, "image"); });
+    root.querySelector("[data-gallery]").addEventListener("click", function () { takeFile(gallery, "image"); });
+    root.querySelector("[data-video]").addEventListener("click", function () { takeFile(video, "video"); });
+    var pressTimer = 0;
+    thread.addEventListener("pointerdown", function (event) {
+      var bubble = event.target.closest && event.target.closest(".vcom-bubble");
+      if (!bubble) return;
+      clearTimeout(pressTimer);
+      pressTimer = setTimeout(function () { bubble.classList.add("ask"); }, 480);
     });
-    bar.querySelector("[data-camera]").addEventListener("click", function () { takeFile(camera, "image"); });
-    bar.querySelector("[data-gallery]").addEventListener("click", function () { takeFile(gallery, "image"); });
-    bar.querySelector("[data-video]").addEventListener("click", function () { takeFile(video, "video"); });
+    thread.addEventListener("pointerup", function () { clearTimeout(pressTimer); });
+    thread.addEventListener("pointermove", function () { clearTimeout(pressTimer); });
+    thread.addEventListener("click", function (event) {
+      var remove = event.target.closest && event.target.closest("[data-delete]");
+      if (remove) {
+        var bubble = remove.closest(".vcom-bubble");
+        var user = currentUser();
+        var fs = window.firebase_firestore;
+        var chatId = window.__vcomOpenChat;
+        if (!user || !fs || !fs.deleteDoc || !chatId || !bubble || bubble.dataset.sender !== user.uid) {
+          status.textContent = "אפשר למחוק רק הודעה שלך";
+          return;
+        }
+        fs.deleteDoc(fs.doc(fs.getFirestore(), "chats", chatId, "messages", remove.dataset.delete)).then(function () {
+          status.textContent = "";
+        }).catch(function () { status.textContent = "לא הצלחנו למחוק"; });
+        return;
+      }
+      var voice = event.target.closest && event.target.closest("[data-voice]");
+      if (!voice) return;
+      if (playingId === voice.dataset.voice && !player.paused) {
+        player.pause();
+        playingId = "";
+        paint();
+        return;
+      }
+      playingId = voice.dataset.voice;
+      player.src = voice.dataset.url;
+      player.play().catch(function () { status.textContent = "לא הצלחנו לשלוח"; });
+      paint();
+    });
+    player.addEventListener("ended", function () { playingId = ""; paint(); });
     setInterval(function () {
       var open = chatOpen();
-      bar.hidden = !open;
+      root.hidden = !open;
+      if (!open && hold) endHold();
       var id = open ? window.__vcomOpenChat : "";
       if (id !== watched) watch(id);
     }, 400);
@@ -3037,16 +3154,23 @@
       + "#vcom-guest-remote-video{position:fixed;left:0;right:0;top:108px;bottom:168px;width:100%;height:auto;object-fit:cover;object-position:center;z-index:10020;background:#000;pointer-events:none;transform:translateZ(0)}"
       + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;z-index:10021;background:#111;transform:scaleX(-1);pointer-events:none}"
       + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}"
-      + "#vcom-chat-media{position:fixed;z-index:40;left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 72px);display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:16px;background:rgba(255,255,255,.96);box-shadow:0 4px 18px rgba(0,0,0,.12);direction:rtl}"
       + "#vcom-chat-media[hidden]{display:none!important}"
-      + "#vcom-chat-media-tray{display:flex;gap:8px;overflow:auto;max-height:168px}"
-      + "#vcom-chat-media-tray:empty{display:none}"
-      + "#vcom-chat-media-tray img,#vcom-chat-media-tray video{width:112px;height:112px;object-fit:cover;border-radius:12px;background:#111;flex:0 0 auto}"
-      + "#vcom-chat-media-tray audio{width:180px;flex:0 0 auto}"
-      + "#vcom-chat-media-actions{display:flex;gap:8px}"
-      + "#vcom-chat-media-actions button{flex:1;min-height:40px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + "#vcom-chat-media-actions button.rec{background:#FF3B30}"
-      + "#vcom-chat-media-status{min-height:16px;margin:0;color:#C62828;font-size:13px;text-align:right}";
+      + "#vcom-chat-thread{position:fixed;z-index:36;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 72px);bottom:calc(env(safe-area-inset-bottom,0px) + 118px);overflow:auto;background:#F2F2F7;padding:12px 10px 8px;box-sizing:border-box}"
+      + ".vcom-bubble{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;margin:0 0 8px auto;background:#fff;color:#1C1C1E;border-radius:16px 16px 4px 16px;padding:6px;position:relative}"
+      + ".vcom-bubble.mine{margin:0 auto 8px 0;background:#007AFF;color:#fff;border-radius:16px 16px 16px 4px}"
+      + ".vcom-bubble p{margin:0;padding:4px 8px;font:16px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;white-space:pre-wrap;word-break:break-word;direction:rtl}"
+      + ".vcom-bubble img,.vcom-bubble video{display:block;width:min(240px,68vw);max-height:280px;object-fit:cover;border-radius:12px;background:#111}"
+      + ".vcom-voice{min-height:44px;border:0;border-radius:12px;background:transparent;color:inherit;font:600 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:8px 12px}"
+      + ".vcom-bubble time{align-self:flex-end;opacity:.75;font-size:11px;padding:2px 6px 0}"
+      + ".vcom-bubble [data-delete]{display:none;position:absolute;top:-18px;left:8px;border:0;border-radius:10px;background:#FF3B30;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:32px;padding:0 10px}"
+      + ".vcom-bubble.ask [data-delete]{display:block}"
+      + "#vcom-chat-tools{position:fixed;z-index:37;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 64px);display:flex;justify-content:flex-end;gap:8px}"
+      + "#vcom-chat-tools button{min-height:34px;border:0;border-radius:17px;background:#007AFF;color:#fff;padding:0 12px;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chat-mic{position:fixed;z-index:38;left:54px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:46px;height:46px;border:0;border-radius:50%;background:#007AFF;color:#fff;font:700 11px/1.1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;touch-action:none}"
+      + "#vcom-chat-mic.rec{background:#FF3B30}"
+      + "#vcom-chat-rec{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);margin:0;color:#FF3B30;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right}"
+      + "#vcom-chat-rec[hidden]{display:none!important}"
+      + "#vcom-chat-media-status{position:fixed;z-index:38;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 102px);margin:0;color:#C62828;font-size:13px;text-align:right}";
   }
   function guestCss() {
     return ""
