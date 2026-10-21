@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid12";
+  window.__VCOM_LINK_BUILD = "vid14";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1198,12 +1198,9 @@
     if (chatTab == null || chatTab === "") return false;
     return (tab | 0) === (chatTab | 0);
   };
-  window.vcomChatOverlayOpen = function (chatOpen, grouped, composer, stamped, now) {
+  window.vcomChatOverlayOpen = function (chatOpen, grouped) {
     if (grouped) return true;
-    if (!chatOpen) return false;
-    if (composer === false) return false;
-    var fresh = !!stamped && (now - stamped) < 400;
-    return !!(fresh || (!stamped && composer === true));
+    return !!chatOpen;
   };
   window.vcomCallShouldRelay = function (iceState, relayed) {
     if (relayed) return false;
