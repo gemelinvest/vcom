@@ -339,7 +339,7 @@ test("owner and guest ontrack attach video through vcomAttachCallVideo", functio
   assert.match(src, /vcomAttachCallVideo\(nodes\.localVideo, stream, "local"\)/);
 });
 
-test("vcomLiftCallVideos lifts remote Flutter video above the canvas", function () {
+test("vcomLiftCallVideos keeps Flutter video in place and shows a stable copy", function () {
   const w = loadLink();
   const body = w.document.body;
   const moved = [];
@@ -350,7 +350,7 @@ test("vcomLiftCallVideos lifts remote Flutter video above the canvas", function 
   };
   const remote = {
     id: "video_RTCVideoRenderer-remote",
-    srcObject: { getVideoTracks: function () { return [{ kind: "video" }]; } },
+    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "remote-v" }]; } },
     style: {},
     hidden: false,
     parentElement: { tagName: "FLT-PLATFORM-VIEW" },
@@ -362,7 +362,7 @@ test("vcomLiftCallVideos lifts remote Flutter video above the canvas", function 
   };
   const local = {
     id: "video_RTCVideoRenderer-local",
-    srcObject: { getVideoTracks: function () { return [{ kind: "video" }]; } },
+    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "local-v" }]; } },
     style: {},
     hidden: false,
     parentElement: { tagName: "FLT-PLATFORM-VIEW" },
@@ -375,11 +375,65 @@ test("vcomLiftCallVideos lifts remote Flutter video above the canvas", function 
   w.document.querySelectorAll = function () { return [remote, local]; };
   const result = w.vcomLiftCallVideos();
   assert.equal(result.shown, 2);
-  assert.equal(remote.parentElement, body);
-  assert.equal(local.parentElement, body);
-  assert.equal(Number(remote.style.zIndex) >= 10020, true);
-  assert.equal(Number(local.style.zIndex) >= 10021, true);
-  assert.equal(moved.length, 2);
+  assert.equal(remote.parentElement.tagName, "FLT-PLATFORM-VIEW");
+  assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
+  assert.equal(remote.style.opacity, "0");
+  assert.equal(local.style.opacity, "0");
+  const stageRemote = w.__vcomStageVideos.remote;
+  const stageLocal = w.__vcomStageVideos.local;
+  assert.equal(stageRemote.parentElement, body);
+  assert.equal(stageLocal.parentElement, body);
+  assert.equal(Number(stageRemote.style.zIndex) >= 10020, true);
+  assert.equal(Number(stageLocal.style.zIndex) >= 10021, true);
+  assert.equal(stageRemote.srcObject, remote.srcObject);
+  assert.equal(stageLocal.srcObject, local.srcObject);
+  assert.equal(stageRemote.style.height, "100%");
+  let plays = 0;
+  stageRemote.play = function () { plays += 1; return Promise.resolve(); };
+  stageLocal.play = function () { plays += 1; return Promise.resolve(); };
+  const again = w.vcomLiftCallVideos();
+  assert.equal(again.shown, 2);
+  assert.equal(plays, 0);
+  assert.equal(stageRemote.style.width, "100%");
+  assert.equal(stageLocal.style.width, "112px");
+  assert.equal(moved.indexOf(remote), -1);
+  assert.equal(moved.indexOf(local), -1);
+});
+
+test("repeat video attach does not restart a playing picture", function () {
+  const w = loadLink();
+  let plays = 0;
+  let assigns = 0;
+  let src = null;
+  const el = {
+    style: {},
+    hidden: true,
+    paused: true,
+    set srcObject(value) { assigns += 1; src = value; },
+    get srcObject() { return src; },
+    setAttribute: function () {},
+    removeAttribute: function () {},
+    play: function () { plays += 1; return Promise.resolve(); }
+  };
+  const stream = { getVideoTracks: function () { return [{ kind: "video", id: "v" }]; } };
+  const first = w.vcomAttachCallVideo(el, stream, "remote");
+  el.paused = false;
+  const second = w.vcomAttachCallVideo(el, stream, "remote");
+  assert.equal(first.ok, true);
+  assert.equal(second.stable, true);
+  assert.equal(assigns, 1);
+  assert.equal(plays, 1);
+  assert.equal(el.style.height, "100%");
+});
+
+test("camera tracks stay on the small preview so the remote picture does not swap", function () {
+  const w = loadLink();
+  const stream = { getVideoTracks: function () { return [{ kind: "video", id: "cam", readyState: "live" }]; } };
+  assert.equal(w.vcomNoteLocalVideo(stream), true);
+  const preview = { id: "video_RTCVideoRenderer-0", srcObject: stream, style: {} };
+  const remote = { id: "video_RTCVideoRenderer-1", srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "far", readyState: "live" }]; } }, style: {} };
+  assert.equal(w.vcomVideoIsLocal(preview), true);
+  assert.equal(w.vcomVideoIsLocal(remote), false);
 });
 
 test("ended call videos are hidden so they do not cover the app", function () {
