@@ -387,7 +387,9 @@ test("vcomLiftCallVideos keeps Flutter video in place and shows a stable copy", 
   assert.equal(Number(stageLocal.style.zIndex) >= 10021, true);
   assert.equal(stageRemote.srcObject, remote.srcObject);
   assert.equal(stageLocal.srcObject, local.srcObject);
-  assert.equal(stageRemote.style.height, "100%");
+  assert.equal(stageRemote.style.bottom, "168px");
+  assert.equal(stageLocal.style.width, "min(168px, 40vw)");
+  assert.equal(stageLocal.style.height, "min(292px, 36vh)");
   let plays = 0;
   stageRemote.play = function () { plays += 1; return Promise.resolve(); };
   stageLocal.play = function () { plays += 1; return Promise.resolve(); };
@@ -395,7 +397,7 @@ test("vcomLiftCallVideos keeps Flutter video in place and shows a stable copy", 
   assert.equal(again.shown, 2);
   assert.equal(plays, 0);
   assert.equal(stageRemote.style.width, "100%");
-  assert.equal(stageLocal.style.width, "112px");
+  assert.equal(stageLocal.style.width, "min(168px, 40vw)");
   assert.equal(moved.indexOf(remote), -1);
   assert.equal(moved.indexOf(local), -1);
 });
@@ -423,7 +425,61 @@ test("repeat video attach does not restart a playing picture", function () {
   assert.equal(second.stable, true);
   assert.equal(assigns, 1);
   assert.equal(plays, 1);
-  assert.equal(el.style.height, "100%");
+  assert.equal(el.style.top, "108px");
+  assert.equal(el.style.bottom, "168px");
+  assert.equal(el.style.height, "auto");
+});
+
+test("local preview fills its frame and remote video leaves the call buttons visible", function () {
+  const w = loadLink();
+  w.innerWidth = 400;
+  w.innerHeight = 800;
+  const body = w.document.body;
+  body.appendChild = function (node) {
+    node.parentElement = body;
+    return node;
+  };
+  function video(id, track, rect, local) {
+    return {
+      id: id,
+      srcObject: { getVideoTracks: function () { return [{ kind: "video", id: track, readyState: "live" }]; } },
+      style: {},
+      hidden: false,
+      parentElement: {
+        tagName: "FLT-PLATFORM-VIEW",
+        getBoundingClientRect: function () { return rect; },
+        parentElement: null
+      },
+      attrs: local ? { "data-vcom-local": "1" } : {},
+      setAttribute: function (name, value) { this.attrs[name] = String(value); },
+      removeAttribute: function (name) { delete this.attrs[name]; },
+      getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+      play: function () { return Promise.resolve(); }
+    };
+  }
+  const local = video("video_RTCVideoRenderer-local", "cam", { top: 48, left: 8, width: 160, height: 292 }, true);
+  const remote = video("video_RTCVideoRenderer-remote", "far", { top: 0, left: 0, width: 400, height: 800 }, false);
+  w.document.querySelectorAll = function () { return [remote, local]; };
+  const result = w.vcomLiftCallVideos();
+  assert.equal(result.shown, 2);
+  const stageLocal = w.__vcomStageVideos.local;
+  const stageRemote = w.__vcomStageVideos.remote;
+  assert.equal(stageLocal.style.width, "160px");
+  assert.equal(stageLocal.style.height, "292px");
+  assert.equal(stageLocal.style.top, "48px");
+  assert.equal(stageLocal.style.left, "8px");
+  assert.equal(stageLocal.style.objectFit, "cover");
+  const remoteTop = Number.parseFloat(stageRemote.style.top);
+  const remoteHeight = Number.parseFloat(stageRemote.style.height);
+  assert.equal(remoteTop >= 96, true);
+  assert.equal(remoteTop + remoteHeight <= 800 - 148, true);
+  let plays = 0;
+  stageLocal.play = function () { plays += 1; return Promise.resolve(); };
+  stageRemote.play = function () { plays += 1; return Promise.resolve(); };
+  w.vcomLiftCallVideos();
+  assert.equal(plays, 0);
+  assert.equal(stageLocal.style.width, "160px");
+  assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
 });
 
 test("camera tracks stay on the small preview so the remote picture does not swap", function () {
