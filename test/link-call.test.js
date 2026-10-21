@@ -339,23 +339,32 @@ test("owner and guest ontrack attach video through vcomAttachCallVideo", functio
   assert.match(src, /vcomAttachCallVideo\(nodes\.localVideo, stream, "local"\)/);
 });
 
-test("vcomLiftCallVideos keeps each Flutter video inside its platform-view slot", function () {
+test("vcomLiftCallVideos pins the local preview to its frame and keeps the remote picture above the buttons", function () {
   const w = loadLink();
+  w.innerWidth = 400;
+  w.innerHeight = 800;
   const body = w.document.body;
-  const moved = [];
   body.appendChild = function (node) {
     node.parentElement = body;
-    moved.push(node);
     return node;
   };
   function video(id, track, local) {
+    const host = {
+      tagName: "FLT-PLATFORM-VIEW",
+      style: {},
+      getBoundingClientRect: function () {
+        return local
+          ? { top: 16, left: 16, width: 112, height: 156 }
+          : { top: 0, left: 0, width: 400, height: 800 };
+      }
+    };
     return {
       id: id,
       srcObject: { getVideoTracks: function () { return [{ kind: "video", id: track }]; } },
       style: {},
       hidden: false,
       paused: false,
-      parentElement: { tagName: "FLT-PLATFORM-VIEW", style: {} },
+      parentElement: host,
       attrs: local ? { "data-vcom-local": "1" } : {},
       setAttribute: function (name, value) { this.attrs[name] = String(value); },
       removeAttribute: function (name) { delete this.attrs[name]; },
@@ -368,48 +377,46 @@ test("vcomLiftCallVideos keeps each Flutter video inside its platform-view slot"
   w.document.querySelectorAll = function () { return [remote, local]; };
   const result = w.vcomLiftCallVideos();
   assert.equal(result.shown, 2);
-  assert.equal(remote.parentElement.tagName, "FLT-PLATFORM-VIEW");
-  assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
-  assert.equal(remote.style.position, "absolute");
-  assert.equal(local.style.position, "absolute");
-  assert.equal(remote.style.width, "100%");
-  assert.equal(local.style.width, "100%");
-  assert.equal(local.style.height, "100%");
-  assert.equal(remote.style.objectFit, "cover");
+  assert.equal(local.parentElement, body);
+  assert.equal(remote.parentElement, body);
+  assert.equal(local.style.position, "fixed");
+  assert.equal(local.style.top, "16px");
+  assert.equal(local.style.left, "16px");
+  assert.equal(local.style.width, "112px");
+  assert.equal(local.style.height, "156px");
   assert.equal(local.style.objectFit, "cover");
   assert.equal(local.style.transform, "scaleX(-1)");
+  assert.equal(local.style.borderRadius, "16px");
+  assert.equal(local.style.zIndex, "10030");
+  assert.equal(local.style.pointerEvents, "none");
+  assert.equal(remote.style.position, "fixed");
+  assert.equal(remote.style.objectFit, "cover");
   assert.equal(remote.style.transform, "none");
-  assert.equal(remote.style.opacity, "");
-  assert.equal(local.style.opacity, "");
-  assert.equal(remote.style.top, "");
+  assert.equal(remote.style.zIndex, "10020");
+  assert.equal(remote.style.pointerEvents, "none");
+  const remoteTop = parseInt(remote.style.top, 10);
+  const remoteHeight = parseInt(remote.style.height, 10);
+  assert.equal(remoteTop >= 88, true);
+  assert.equal(remoteTop + remoteHeight <= w.innerHeight - 136, true);
   assert.equal(w.__vcomStageVideos, undefined);
   let plays = 0;
   remote.play = function () { plays += 1; return Promise.resolve(); };
   local.play = function () { plays += 1; return Promise.resolve(); };
-  remote.style.position = "fixed";
-  remote.style.top = "0px";
   remote.style.width = "100%";
   remote.style.height = "100dvh";
-  remote.style.zIndex = "10020";
-  local.style.position = "fixed";
+  remote.style.top = "0px";
+  local.style.width = "100%";
+  local.style.height = "100%";
   local.style.top = "72px";
-  local.style.width = "112px";
-  local.style.height = "156px";
   const again = w.vcomLiftCallVideos();
   assert.equal(again.shown, 2);
   assert.equal(plays, 0);
-  assert.equal(remote.style.position, "absolute");
-  assert.equal(remote.style.width, "100%");
-  assert.equal(remote.style.height, "100%");
-  assert.equal(remote.style.top, "");
-  assert.equal(remote.style.zIndex, "");
-  assert.equal(local.style.position, "absolute");
-  assert.equal(local.style.width, "100%");
-  assert.equal(local.style.height, "100%");
-  assert.equal(local.style.top, "");
-  assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
-  assert.equal(moved.indexOf(remote), -1);
-  assert.equal(moved.indexOf(local), -1);
+  assert.equal(local.style.top, "16px");
+  assert.equal(local.style.width, "112px");
+  assert.equal(local.style.height, "156px");
+  assert.equal(remote.style.top, remoteTop + "px");
+  assert.equal(remote.style.height, remoteHeight + "px");
+  assert.equal(local.parentElement, body);
 });
 
 test("repeat video attach does not restart a playing picture", function () {
@@ -440,13 +447,18 @@ test("repeat video attach does not restart a playing picture", function () {
   assert.equal(el.style.height, "auto");
 });
 
-test("local preview stays in its frame and a pulled video is put back", function () {
+test("local preview is drawn on top of its rounded frame", function () {
   const w = loadLink();
   const body = w.document.body;
+  body.appendChild = function (node) {
+    node.parentElement = body;
+    return node;
+  };
   const frame = {
     tagName: "FLT-PLATFORM-VIEW",
     style: {},
     children: [],
+    getBoundingClientRect: function () { return { top: 30, left: 12, width: 112, height: 156 }; },
     appendChild: function (node) {
       node.parentElement = frame;
       this.children = [node];
@@ -473,22 +485,114 @@ test("local preview stays in its frame and a pulled video is put back", function
   };
   const result = w.vcomLiftCallVideos();
   assert.equal(result.shown, 1);
-  assert.equal(local.parentElement, frame);
-  assert.equal(local.style.position, "absolute");
-  assert.equal(local.style.width, "100%");
-  assert.equal(local.style.height, "100%");
-  assert.equal(local.style.top, "");
-  assert.equal(local.style.left, "");
+  assert.equal(local.parentElement, body);
+  assert.equal(local.style.position, "fixed");
+  assert.equal(local.style.top, "30px");
+  assert.equal(local.style.left, "12px");
+  assert.equal(local.style.width, "112px");
+  assert.equal(local.style.height, "156px");
   assert.equal(local.style.objectFit, "cover");
   assert.equal(local.style.transform, "scaleX(-1)");
-  assert.equal(local.attrs["data-vcom-lifted"], undefined);
-  assert.equal(frame.style.overflow, "hidden");
+  assert.equal(local.style.borderRadius, "16px");
+  assert.equal(local.attrs["data-vcom-local"], "1");
+  assert.equal(local.attrs["data-vcom-pinned"], "1");
   let plays = 0;
   local.play = function () { plays += 1; return Promise.resolve(); };
+  local.style.width = "100%";
   w.vcomLiftCallVideos();
   assert.equal(plays, 0);
-  assert.equal(local.style.width, "100%");
-  assert.equal(local.parentElement, frame);
+  assert.equal(local.style.width, "112px");
+  assert.equal(local.style.top, "30px");
+  assert.equal(local.parentElement, body);
+});
+
+test("hangup stops the dial tone even if the loopback connects afterwards", async function () {
+  const w = loadLink();
+  const plays = [];
+  let ontrack = null;
+  let pcs = 0;
+  const el = {
+    id: "vcom-ringback",
+    style: {},
+    hidden: true,
+    paused: true,
+    autoplay: true,
+    muted: false,
+    srcObject: null,
+    src: "",
+    currentSrc: "",
+    setAttribute: function () {},
+    removeAttribute: function () {},
+    play: function () { plays.push("play"); this.paused = false; return Promise.resolve(); },
+    pause: function () { plays.push("pause"); this.paused = true; }
+  };
+  const guest = {
+    id: "vcom-guest-caller",
+    srcObject: { tag: "call" },
+    muted: false,
+    paused: false,
+    pause: function () { this.paused = true; }
+  };
+  w.document.getElementById = function (id) {
+    if (id === "vcom-ringback") return el;
+    if (id === "vcom-guest-caller") return guest;
+    return null;
+  };
+  w.document.querySelectorAll = function () { return []; };
+  w.setInterval = function () { return 7; };
+  w.clearInterval = function () {};
+  w.RTCPeerConnection = function () {
+    pcs += 1;
+    this.addTrack = function () {};
+    this.addIceCandidate = function () { return Promise.resolve(); };
+    this.close = function () {};
+    this.createOffer = function () { return new Promise(function () {}); };
+    this.setLocalDescription = function () { return Promise.resolve(); };
+    this.setRemoteDescription = function () { return Promise.resolve(); };
+    this.createAnswer = function () { return Promise.resolve({}); };
+    this.localDescription = { type: "offer", sdp: "x" };
+    if (pcs === 2) {
+      Object.defineProperty(this, "ontrack", {
+        set: function (fn) { ontrack = fn; },
+        get: function () { return ontrack; }
+      });
+    }
+  };
+  w.AudioContext = function () {
+    this.state = "running";
+    this.currentTime = 0;
+    this.resume = function () {};
+    this.close = function () { this.state = "closed"; };
+    this.createGain = function () { return { gain: { value: 0 }, connect: function () {} }; };
+    this.createOscillator = function () {
+      return { type: "", frequency: { value: 0 }, connect: function () {}, start: function () {}, stop: function () {} };
+    };
+    this.createMediaStreamDestination = function () {
+      return { stream: { getAudioTracks: function () { return [{}]; }, getTracks: function () { return [{ stop: function () {} }]; } } };
+    };
+  };
+  w.vcomStartRingback();
+  assert.equal(w.__vcomRingbackOn, true);
+  assert.equal(typeof ontrack, "function");
+  const during = plays.length;
+  w.vcomStartRingback();
+  assert.equal(plays.length, during);
+  assert.equal(w.__vcomRingbackPlays, 1);
+  w.vcomStopRingback();
+  const afterStop = plays.slice();
+  assert.equal(w.__vcomRingbackOn, false);
+  assert.equal(el.paused, true);
+  assert.equal(el.muted, true);
+  assert.equal(el.srcObject, null);
+  ontrack({
+    track: { stop: function () { plays.push("track-stop"); } },
+    streams: [{ getTracks: function () { return []; } }]
+  });
+  assert.deepEqual(plays, afterStop.concat(["track-stop"]));
+  assert.equal(el.srcObject, null);
+  assert.equal(el.paused, true);
+  assert.equal(guest.muted, false);
+  assert.equal(guest.srcObject.tag, "call");
 });
 
 test("camera tracks stay on the small preview so the remote picture does not swap", function () {
