@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid15";
+  window.__VCOM_LINK_BUILD = "vid16";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -210,6 +210,130 @@
       try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (e) {}
       if (window.vcomRouteOutputs) window.vcomRouteOutputs();
     }
+  };
+  var whistle = null;
+  var placeTimer = 0;
+  var vibeTimer = 0;
+  function clearIncomingTimers() {
+    if (placeTimer) { clearTimeout(placeTimer); placeTimer = 0; }
+    if (vibeTimer) { clearTimeout(vibeTimer); vibeTimer = 0; }
+  }
+  function ensureWhistle() {
+    if (whistle) return whistle;
+    var style = document.createElement("style");
+    style.textContent = "#vcom-incoming-whistle{position:fixed;z-index:70;margin:0;padding:0;border:0;border-radius:50%;object-fit:cover;object-position:center;pointer-events:none;background:transparent;display:block}#vcom-incoming-whistle[hidden]{display:none!important}";
+    document.head.appendChild(style);
+    whistle = document.createElement("img");
+    whistle.id = "vcom-incoming-whistle";
+    whistle.alt = "";
+    whistle.src = "/icons/vcom-splash.png?v=call11";
+    whistle.hidden = true;
+    document.body.appendChild(whistle);
+    window.addEventListener("resize", function () {
+      if (window.__vcomVibrating) placeWhistle();
+    });
+    return whistle;
+  }
+  function semanticsLabel(node) {
+    if (!node || !node.getAttribute) return "";
+    return node.getAttribute("aria-label") || "";
+  }
+  function semanticsBox(node) {
+    if (!node || !node.getBoundingClientRect) return null;
+    var rect = node.getBoundingClientRect();
+    if (!rect || rect.width < 8 || rect.height < 8 || rect.height > 72) return null;
+    if (rect.bottom < 0) return null;
+    return rect;
+  }
+  window.vcomIncomingWhistleBox = function (titleBottom, nextTop, centerX) {
+    var span = nextTop - titleBottom;
+    if (!(span > 40)) return null;
+    var outer = span * (126 / 178);
+    var inset = outer * (4 / 126);
+    var size = outer - inset * 2;
+    return {
+      top: titleBottom + span * (24 / 178) + inset,
+      left: centerX - size / 2,
+      size: size
+    };
+  };
+  function placeWhistle() {
+    var img = ensureWhistle();
+    var host = document.querySelector("flt-semantics-host");
+    var title = null;
+    var phone = null;
+    var phoneGap = 1e9;
+    if (host && host.querySelectorAll) {
+      var nodes = host.querySelectorAll("[aria-label]");
+      for (var i = 0; i < nodes.length; i++) {
+        var label = semanticsLabel(nodes[i]);
+        if (label !== "שיחה נכנסת" && label !== "שיחת וידאו נכנסת") continue;
+        var box = semanticsBox(nodes[i]);
+        if (!box) continue;
+        if (!title || box.height < title.height) title = box;
+      }
+      if (title) {
+        for (var j = 0; j < nodes.length; j++) {
+          var name = semanticsLabel(nodes[j]);
+          if (!name || name === "שיחה נכנסת" || name === "שיחת וידאו נכנסת") continue;
+          if (!/\d/.test(name)) continue;
+          var next = semanticsBox(nodes[j]);
+          if (!next) continue;
+          var gap = next.top - title.bottom;
+          if (gap > 40 && gap < 480 && gap < phoneGap) {
+            phoneGap = gap;
+            phone = next;
+          }
+        }
+      }
+    }
+    var spot = null;
+    if (title && phone) spot = window.vcomIncomingWhistleBox(title.bottom, phone.top, (title.left + title.right) / 2);
+    else if (title) {
+      var fallback = window.vcomIncomingWhistleBox(title.bottom, title.bottom + 178, (title.left + title.right) / 2);
+      spot = fallback;
+    }
+    if (!spot) {
+      img.hidden = true;
+      return false;
+    }
+    img.hidden = false;
+    img.style.top = Math.round(spot.top) + "px";
+    img.style.left = Math.round(spot.left) + "px";
+    img.style.width = Math.round(spot.size) + "px";
+    img.style.height = Math.round(spot.size) + "px";
+    return true;
+  }
+  function armWhistle() {
+    var tries = 0;
+    function tick() {
+      if (!window.__vcomVibrating) return;
+      placeWhistle();
+      tries += 1;
+      if (tries < 8) placeTimer = setTimeout(tick, tries < 3 ? 50 : 200);
+    }
+    tick();
+  }
+  function pulseVibrate() {
+    try { if (navigator.vibrate) navigator.vibrate([500, 200, 500, 700, 500, 200, 500, 700]); } catch (e) {}
+    vibeTimer = setTimeout(function () {
+      if (window.__vcomVibrating) pulseVibrate();
+    }, 3800);
+  }
+  window.vcomStartVibrate = function () {
+    if (window.__vcomVibrating) {
+      placeWhistle();
+      return;
+    }
+    window.__vcomVibrating = true;
+    pulseVibrate();
+    armWhistle();
+  };
+  window.vcomStopVibrate = function () {
+    window.__vcomVibrating = false;
+    clearIncomingTimers();
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+    if (whistle) whistle.hidden = true;
   };
   var MEDIA_KEY = "vcom.media.granted.v1";
   function mediaGranted() {
