@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid8";
+  window.__VCOM_LINK_BUILD = "vid9";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1146,6 +1146,45 @@
     return false;
   };
 
+  window.vcomParseMedia = function (text) {
+    var raw = String(text || "");
+    if (raw.indexOf("vcom-media\n") !== 0) return null;
+    var parts = raw.split("\n");
+    var kind = parts[1] || "";
+    var url = parts.slice(2).join("\n");
+    if (kind !== "image" && kind !== "video" && kind !== "audio") return null;
+    if (!/^https:\/\//.test(url)) return null;
+    return { kind: kind, url: url };
+  };
+  window.vcomMediaLabel = function (text) {
+    var media = window.vcomParseMedia(text);
+    if (!media) return "";
+    if (media.kind === "audio") return "הודעה קולית";
+    if (media.kind === "video") return "סרטון";
+    return "תמונה";
+  };
+  window.vcomEncodeMedia = function (kind, url) {
+    return "vcom-media\n" + kind + "\n" + url;
+  };
+  window.vcomDrawerTapShouldClose = function (point) {
+    point = point || {};
+    if ((window.__vcomDrawerX || 0) < 0.5) return false;
+    if (point.insideMenu) return false;
+    var width = window.__vcomDrawerWidth >= 200 ? window.__vcomDrawerWidth : 304;
+    var rtl = point.rtl !== false;
+    var x = Number(point.x) || 0;
+    var view = Number(point.viewWidth) || 0;
+    var inDrawer = rtl ? x > view - width : x < width;
+    return !inDrawer;
+  };
+  window.vcomCloseSideMenu = function () {
+    var state = window.__vcomDrawerState;
+    if (state && typeof state.aJ === "function") {
+      try { state.aJ(0); return true; } catch (eClose) {}
+    }
+    if (typeof window.__vcomDrawerMove === "function") window.__vcomDrawerMove(0);
+    return false;
+  };
   window.vcomDefaultSpeakerOn = false;
   window.vcomCallAudioRoute = function (speakerOn) {
     return speakerOn ? "speaker" : "earpiece";
@@ -1599,6 +1638,7 @@
     };
     var origRelease = window.vcomReleaseCapture;
     window.vcomReleaseCapture = function (keepRoute) {
+      if (window.__vcomIgnoreCapture) return;
       if (!keepRoute) {
         window.__vcomUserSpeaker = false;
         stopHold();
@@ -1633,14 +1673,14 @@
     if (typeof origGum === "function") {
       navigator.mediaDevices.getUserMedia = function (constraints) {
         var video = !!(constraints && constraints.video);
-        if (!video) {
+        if (!video && !window.__vcomIgnoreCapture) {
           window.__vcomUserSpeaker = false;
           window.__vcomSpeaker = false;
           window.__vcomSpeakerTouched = false;
           window.__vcomNextCallEarpiece = true;
         }
         return Promise.resolve(origGum.apply(this, arguments)).then(function (stream) {
-          if (!video && !(window.vcomCallHasVideo && window.vcomCallHasVideo(stream))) window.vcomHoldEarpiece();
+          if (!window.__vcomIgnoreCapture && !video && !(window.vcomCallHasVideo && window.vcomCallHasVideo(stream))) window.vcomHoldEarpiece();
           return stream;
         });
       };
@@ -2380,7 +2420,14 @@
       if (!isFinite(x)) x = 0;
       if (x < 0) x = 0;
       if (x > 1) x = 1;
+      var previous = window.__vcomDrawerX || 0;
       window.__vcomDrawerX = x;
+      if (previous > 0.2 && x < 0.05 && !busy) {
+        showForm(false);
+        nameInput.value = "";
+        error.textContent = "";
+        resetIssueButton();
+      }
       var gate = document.getElementById("vcom-approval");
       var blocked = gate && !gate.hidden;
       var onCall = !!window.__vcomRinging;
@@ -2393,19 +2440,37 @@
       var visible = allow && x > 0.02;
       menu.hidden = !visible;
       paste.hidden = !window.__vcomUid || blocked || onCall || x > 0.02 || (window.__vcomTab | 0) !== 0;
-      var width = Math.min((window.__vcomDrawerWidth >= 200 ? window.__vcomDrawerWidth : 304), 304, window.innerWidth);
-      logo.hidden = !visible;
+      logo.hidden = true;
       if (visible) {
         var spot = place();
         var shift = (1 - x) * spot.width;
         menu.style.transform = "translate3d(" + (spot.rtl ? shift : -shift) + "px,0,0)";
-        logo.style.left = (window.innerWidth - width * x + 10) + "px";
-        logo.style.top = "calc(env(safe-area-inset-top, 0px) + 10px)";
       } else menu.style.transform = "";
     }
     window.__vcomDrawerMove = applyDrawer;
     applyDrawer(window.__vcomDrawerX || 0);
     window.addEventListener("resize", function () { applyDrawer(window.__vcomDrawerX || 0); });
+    document.addEventListener("pointerdown", function (event) {
+      var node = event.target;
+      var inside = !!(node && node.closest && node.closest("#vcom-link-menu, #vcom-chat-media"));
+      var rtl = String(document.documentElement.getAttribute("dir") || "").toLowerCase() === "rtl";
+      if (!window.vcomDrawerTapShouldClose({ x: event.clientX, viewWidth: window.innerWidth, rtl: rtl, insideMenu: inside })) return;
+      window.vcomCloseSideMenu();
+    }, true);
+    try {
+      var tabNow = window.__vcomTab | 0;
+      Object.defineProperty(window, "__vcomTab", {
+        configurable: true,
+        get: function () { return tabNow; },
+        set: function (value) {
+          var next = value | 0;
+          var changed = next !== tabNow;
+          tabNow = next;
+          if (changed && (window.__vcomDrawerX || 0) > 0.2) window.vcomCloseSideMenu();
+        }
+      });
+    } catch (eTab) {}
+    wireChatMedia();
     function tick() {
       var now = Date.now();
       Object.keys(window.__vcomGuestBook).forEach(function (phone) {
@@ -2711,6 +2776,208 @@
     return found;
   }
 
+  function wireChatMedia() {
+    if (document.getElementById("vcom-chat-media")) return;
+    var bar = document.createElement("div");
+    bar.id = "vcom-chat-media";
+    bar.hidden = true;
+    bar.innerHTML = '<div id="vcom-chat-media-tray"></div><div id="vcom-chat-media-actions"><button type="button" data-mic>קול</button><button type="button" data-camera>מצלמה</button><button type="button" data-gallery>גלריה</button><button type="button" data-video>סרטון</button></div><p id="vcom-chat-media-status"></p>';
+    document.body.appendChild(bar);
+    var tray = bar.querySelector("#vcom-chat-media-tray");
+    var status = bar.querySelector("#vcom-chat-media-status");
+    var mic = bar.querySelector("[data-mic]");
+    var camera = document.createElement("input");
+    camera.type = "file";
+    camera.accept = "image/*";
+    camera.capture = "environment";
+    camera.hidden = true;
+    var gallery = document.createElement("input");
+    gallery.type = "file";
+    gallery.accept = "image/*";
+    gallery.hidden = true;
+    var video = document.createElement("input");
+    video.type = "file";
+    video.accept = "video/*";
+    video.hidden = true;
+    bar.appendChild(camera);
+    bar.appendChild(gallery);
+    bar.appendChild(video);
+    var watched = "";
+    var unsub = null;
+    var sending = false;
+    var recorder = null;
+    function chatOpen() {
+      if (!window.__vcomOpenChat) return false;
+      if (window.__vcomRinging) return false;
+      try {
+        var view = window.__vcomBloc && window.__vcomBloc.c;
+        if (view && view.gnY && view.gnY()) return false;
+        if (view && view.b) return false;
+      } catch (eCall) {}
+      return (window.__vcomDrawerX || 0) < 0.2;
+    }
+    function paint(items) {
+      tray.replaceChildren();
+      items.forEach(function (item) {
+        var node;
+        if (item.kind === "audio") {
+          node = document.createElement("audio");
+          node.controls = true;
+          node.src = item.url;
+        } else if (item.kind === "video") {
+          node = document.createElement("video");
+          node.controls = true;
+          node.playsInline = true;
+          node.src = item.url;
+        } else {
+          node = document.createElement("img");
+          node.alt = "תמונה";
+          node.src = item.url;
+        }
+        tray.appendChild(node);
+      });
+    }
+    function readSnap(snap) {
+      var items = [];
+      var docs = snap && snap.docs ? snap.docs : [];
+      docs.forEach(function (doc) {
+        var data = doc.data ? doc.data() : {};
+        var media = window.vcomParseMedia(data && data.text);
+        if (!media) return;
+        items.push({ kind: media.kind, url: media.url, at: window.asMillis ? 0 : 0, raw: data.createdAt });
+      });
+      items.sort(function (a, b) {
+        function ms(value) {
+          if (!value) return 0;
+          if (typeof value.toMillis === "function") return value.toMillis();
+          if (typeof value.seconds === "number") return value.seconds * 1000;
+          return 0;
+        }
+        return ms(a.raw) - ms(b.raw);
+      });
+      paint(items.slice(-8));
+    }
+    function watch(chatId) {
+      if (unsub) { try { unsub(); } catch (eUn) {} unsub = null; }
+      watched = chatId || "";
+      tray.replaceChildren();
+      if (!watched) return;
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.collection || !fs.onSnapshot || !fs.getFirestore) return;
+      try {
+        unsub = fs.onSnapshot(fs.collection(fs.getFirestore(), "chats", watched, "messages"), function (snap) {
+          if (watched !== window.__vcomOpenChat) return;
+          readSnap(snap);
+        }, function () {});
+      } catch (eWatch) {}
+    }
+    function currentUser() {
+      try {
+        var auth = window.firebase_auth;
+        return auth && auth.getAuth ? auth.getAuth().currentUser : null;
+      } catch (eUser) { return null; }
+    }
+    function sendFile(file, kind) {
+      var chatId = window.__vcomOpenChat;
+      var user = currentUser();
+      if (!chatId || !user || !file || sending) return;
+      if (file.size > 20 * 1024 * 1024) {
+        status.textContent = "הקובץ גדול מדי";
+        return;
+      }
+      sending = true;
+      status.textContent = "שולח...";
+      user.getIdToken().then(function (token) {
+        var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        var ext = kind === "audio" ? "webm" : kind === "video" ? "mp4" : "jpg";
+        var path = "chat-media/" + user.uid + "/" + chatId + "/" + id + "." + ext;
+        return fetch("https://firebasestorage.googleapis.com/v0/b/voip-call-app-7d0c3.firebasestorage.app/o?uploadType=media&name=" + encodeURIComponent(path), {
+          method: "POST",
+          headers: { Authorization: "Firebase " + token, "Content-Type": file.type || "application/octet-stream" },
+          body: file
+        }).then(function (res) {
+          if (!res.ok) throw new Error("upload");
+          return res.json().then(function (data) {
+            return "https://firebasestorage.googleapis.com/v0/b/voip-call-app-7d0c3.firebasestorage.app/o/" + encodeURIComponent(path) + "?alt=media&token=" + (data.downloadTokens || "");
+          });
+        });
+      }).then(function (url) {
+        var fs = window.firebase_firestore;
+        if (!fs || !fs.doc || !fs.setDoc || !fs.getFirestore) throw new Error("no-store");
+        var db = fs.getFirestore();
+        var text = window.vcomEncodeMedia(kind, url);
+        var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
+        var messageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        return fs.setDoc(fs.doc(db, "chats", chatId, "messages", messageId), {
+          senderId: user.uid,
+          text: text,
+          type: "text",
+          createdAt: when
+        }).then(function () {
+          return fs.updateDoc(fs.doc(db, "chats", chatId), {
+            lastMessage: window.vcomMediaLabel(text),
+            lastMessageAt: when,
+            updatedAt: when,
+            lastSenderId: user.uid
+          }).catch(function () {});
+        });
+      }).then(function () {
+        status.textContent = "";
+      }).catch(function () {
+        status.textContent = "לא הצלחנו לשלוח";
+      }).then(function () { sending = false; });
+    }
+    function takeFile(input, kind) {
+      input.value = "";
+      input.onchange = function () {
+        var file = input.files && input.files[0];
+        if (file) sendFile(file, kind);
+      };
+      input.click();
+    }
+    mic.addEventListener("click", function () {
+      if (recorder && recorder.state === "recording") {
+        recorder.stop();
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder !== "function") {
+        status.textContent = "לא הצלחנו לשלוח";
+        return;
+      }
+      window.__vcomIgnoreCapture = true;
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        window.__vcomIgnoreCapture = false;
+        var chunks = [];
+        recorder = new MediaRecorder(stream);
+        recorder.ondataavailable = function (event) { if (event.data && event.data.size) chunks.push(event.data); };
+        recorder.onstop = function () {
+          mic.classList.remove("rec");
+          mic.textContent = "קול";
+          stream.getTracks().forEach(function (track) { try { track.stop(); } catch (eStop) {} });
+          var blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          blob.name = "voice.webm";
+          recorder = null;
+          sendFile(blob, "audio");
+        };
+        recorder.start();
+        mic.classList.add("rec");
+        mic.textContent = "עצור";
+        status.textContent = "";
+      }).catch(function () {
+        window.__vcomIgnoreCapture = false;
+        status.textContent = "לא הצלחנו לשלוח";
+      });
+    });
+    bar.querySelector("[data-camera]").addEventListener("click", function () { takeFile(camera, "image"); });
+    bar.querySelector("[data-gallery]").addEventListener("click", function () { takeFile(gallery, "image"); });
+    bar.querySelector("[data-video]").addEventListener("click", function () { takeFile(video, "video"); });
+    setInterval(function () {
+      var open = chatOpen();
+      bar.hidden = !open;
+      var id = open ? window.__vcomOpenChat : "";
+      if (id !== watched) watch(id);
+    }, 400);
+  }
   function issuerCss() {
     return ""
       + "#vcom-link-menu{position:fixed;z-index:80;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:0 16px 8px;overflow:visible;direction:rtl;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E;touch-action:manipulation}"
@@ -2733,7 +3000,17 @@
       + ".vcom-link-meta{display:block;margin-top:4px;color:#007AFF;font-size:14px;font-weight:600;text-align:right}"
       + "#vcom-guest-remote-video{position:fixed;left:0;right:0;top:108px;bottom:168px;width:100%;height:auto;object-fit:cover;object-position:center;z-index:10020;background:#000;pointer-events:none;transform:translateZ(0)}"
       + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;z-index:10021;background:#111;transform:scaleX(-1);pointer-events:none}"
-      + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}";
+      + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}"
+      + "#vcom-chat-media{position:fixed;z-index:40;left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 72px);display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:16px;background:rgba(255,255,255,.96);box-shadow:0 4px 18px rgba(0,0,0,.12);direction:rtl}"
+      + "#vcom-chat-media[hidden]{display:none!important}"
+      + "#vcom-chat-media-tray{display:flex;gap:8px;overflow:auto;max-height:168px}"
+      + "#vcom-chat-media-tray:empty{display:none}"
+      + "#vcom-chat-media-tray img,#vcom-chat-media-tray video{width:112px;height:112px;object-fit:cover;border-radius:12px;background:#111;flex:0 0 auto}"
+      + "#vcom-chat-media-tray audio{width:180px;flex:0 0 auto}"
+      + "#vcom-chat-media-actions{display:flex;gap:8px}"
+      + "#vcom-chat-media-actions button{flex:1;min-height:40px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chat-media-actions button.rec{background:#FF3B30}"
+      + "#vcom-chat-media-status{min-height:16px;margin:0;color:#C62828;font-size:13px;text-align:right}";
   }
   function guestCss() {
     return ""
