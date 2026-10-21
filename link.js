@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid14";
+  window.__VCOM_LINK_BUILD = "vid15";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1022,9 +1022,20 @@
         lineActive: false
       };
       if (displayName) userDoc.name = displayName;
+      function claimFreshPhone(next, tries) {
+        if (tries <= 0 || !fs.getDoc) return Promise.resolve();
+        var ref = fs.doc(db, "phoneNumbers", next);
+        return fs.getDoc(ref).then(function (snap) {
+          var taken = !!(snap && ((typeof snap.exists === "function" && snap.exists()) || snap.exists === true));
+          if (taken) return claimFreshPhone(tempSignupPhone(), tries - 1);
+          return fs.setDoc(ref, { userId: uid }).then(function () {
+            if (next === phone) return;
+            return fs.updateDoc(fs.doc(db, "users", uid), { phoneNumber: next });
+          });
+        });
+      }
       return fs.setDoc(fs.doc(db, "users", uid), userDoc).then(function () {
-        if (!fs.doc(db, "phoneNumbers", phone)) return;
-        return fs.setDoc(fs.doc(db, "phoneNumbers", phone), { userId: uid });
+        return claimFreshPhone(phone, 8);
       }).catch(function () {});
     }
     form.addEventListener("submit", function (event) {
@@ -1223,6 +1234,47 @@
     }
     if (typeof window.__vcomDrawerMove === "function") window.__vcomDrawerMove(0);
     return false;
+  };
+  window.vcomPhoneKey = function (value) {
+    var digits = String(value || "").replace(/\D/g, "");
+    return /^020\d{6}$/.test(digits) ? digits : "";
+  };
+  window.vcomUsageView = function (data) {
+    data = data || {};
+    var seconds = Math.max(0, Number(data.voiceSeconds) || 0);
+    var minutes = Math.round(seconds / 60);
+    var video = Math.max(0, Math.round(Number(data.videoCalls) || 0));
+    var cap = 3000;
+    var planId = data.plan === "extra" || data.plan === "plus" ? data.plan : "";
+    var plan = planId === "extra" ? "VCOM EXTRA PLUS" : (planId === "plus" ? "VCOM PLUS" : "");
+    return { minutes: minutes, video: video, cap: cap, ratio: Math.max(0, Math.min(1, minutes / cap)), plan: plan, planId: planId };
+  };
+  window.vcomRecordCallUse = function (seconds, video) {
+    seconds = Math.max(0, Math.round(Number(seconds) || 0));
+    if (seconds < 1) return false;
+    var now = Date.now();
+    if (now - (window.__vcomUsageAt || 0) < 5000) return false;
+    var fs = window.firebase_firestore;
+    var uid = window.__vcomUid;
+    if (!fs || !uid || !fs.getFirestore || !fs.doc || !fs.updateDoc) return false;
+    if (typeof fs.increment !== "function" && typeof fs.runTransaction !== "function") return false;
+    var ref = fs.doc(fs.getFirestore(), "users", uid);
+    window.__vcomUsageAt = now;
+    if (typeof fs.increment === "function") {
+      var patch = { voiceSeconds: fs.increment(seconds) };
+      if (video) patch.videoCalls = fs.increment(1);
+      fs.updateDoc(ref, patch).catch(function () {});
+      return true;
+    }
+    fs.runTransaction(fs.getFirestore(), function (tx) {
+      return tx.get(ref).then(function (snap) {
+        var data = (snap && snap.data && snap.data()) || {};
+        var next = { voiceSeconds: (Number(data.voiceSeconds) || 0) + seconds };
+        if (video) next.videoCalls = (Number(data.videoCalls) || 0) + 1;
+        tx.update(ref, next);
+      });
+    }).catch(function () {});
+    return true;
   };
   window.vcomDefaultSpeakerOn = false;
   window.vcomCallAudioRoute = function (speakerOn) {
@@ -2089,6 +2141,82 @@
     return state;
   }
 
+  function wireAccount() {
+    if (document.getElementById("vcom-account")) return;
+    var root = document.createElement("section");
+    root.id = "vcom-account";
+    root.hidden = true;
+    root.innerHTML = '<header><button type="button" data-back aria-label="חזרה">→</button><b>מצב חשבון</b></header>'
+      + '<div class="vcom-allowance"><strong data-minutes>0</strong><span data-cap>מתוך 3,000 דקות שיחה</span><div class="vcom-meter" aria-hidden="true"><i data-fill></i></div></div>'
+      + '<div class="vcom-usage"><div><b data-voice>0</b><span>דקות שיחה</span></div><div><b data-video>0</b><span>שיחות וידאו</span></div></div>'
+      + '<p class="vcom-current" data-current></p>'
+      + '<button type="button" data-upgrade>שדרוג מסלול</button>'
+      + '<div data-plans hidden></div>'
+      + '<p data-status></p>';
+    document.body.appendChild(root);
+    var plans = root.querySelector("[data-plans]");
+    var status = root.querySelector("[data-status]");
+    var held = {};
+    function paint(data) {
+      held = data || {};
+      var view = window.vcomUsageView(held);
+      root.querySelector("[data-minutes]").textContent = view.minutes.toLocaleString("he-IL");
+      root.querySelector("[data-voice]").textContent = view.minutes.toLocaleString("he-IL");
+      root.querySelector("[data-video]").textContent = view.video.toLocaleString("he-IL");
+      root.querySelector("[data-cap]").textContent = "מתוך " + view.cap.toLocaleString("he-IL") + " דקות שיחה";
+      root.querySelector("[data-fill]").style.width = Math.round(view.ratio * 100) + "%";
+      root.querySelector("[data-current]").textContent = view.plan ? ("המסלול שלך: " + view.plan) : "";
+      plans.querySelectorAll("[data-plan]").forEach(function (card) {
+        card.classList.toggle("on", card.getAttribute("data-plan") === view.planId);
+      });
+    }
+    function choose(id) {
+      var fs = window.firebase_firestore;
+      var uid = window.__vcomUid;
+      if (!fs || !uid || !fs.updateDoc) {
+        status.textContent = "שמירת המסלול נכשלה";
+        return;
+      }
+      status.textContent = "";
+      var next = { voiceSeconds: held.voiceSeconds || 0, videoCalls: held.videoCalls || 0, plan: id };
+      fs.updateDoc(fs.doc(fs.getFirestore(), "users", uid), { plan: id }).then(function () {
+        paint(next);
+      }).catch(function () {
+        status.textContent = "שמירת המסלול נכשלה";
+      });
+    }
+    [
+      { id: "plus", name: "VCOM PLUS" },
+      { id: "extra", name: "VCOM EXTRA PLUS" }
+    ].forEach(function (plan) {
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "vcom-plan";
+      card.setAttribute("data-plan", plan.id);
+      card.innerHTML = '<img src="/icons/vcom-handset.png" alt=""><span><strong></strong><small>הבחירה נשמרת בחשבון</small></span>';
+      card.querySelector("strong").textContent = plan.name;
+      card.addEventListener("click", function () { choose(plan.id); });
+      plans.appendChild(card);
+    });
+    root.querySelector("[data-back]").addEventListener("click", function () { root.hidden = true; });
+    root.querySelector("[data-upgrade]").addEventListener("click", function () { plans.hidden = false; });
+    window.vcomOpenAccount = function () {
+      if (window.vcomCloseSideMenu) window.vcomCloseSideMenu();
+      plans.hidden = true;
+      status.textContent = "";
+      root.hidden = false;
+      paint(held);
+      var fs = window.firebase_firestore;
+      var uid = window.__vcomUid;
+      if (!fs || !uid || !fs.getDoc) return;
+      fs.getDoc(fs.doc(fs.getFirestore(), "users", uid)).then(function (snap) {
+        paint((snap && snap.data && snap.data()) || {});
+      }).catch(function () {
+        status.textContent = "לא הצלחנו לטעון את מצב החשבון";
+      });
+    };
+  }
+
   function bootIssuer() {
     var style = document.createElement("style");
     style.textContent = issuerCss();
@@ -2096,7 +2224,7 @@
     var menu = document.createElement("div");
     menu.id = "vcom-link-menu";
     menu.hidden = true;
-    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><button id="vcom-chatcom" type="button"><span class="vcom-link-open-text">Chatcom</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><button id="vcom-chatcom" type="button"><span class="vcom-link-open-text">Chatcom</span></button><button id="vcom-account-open" type="button"><span class="vcom-link-open-text">מצב חשבון</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
     document.body.appendChild(menu);
     var logo = document.createElement("img");
     logo.id = "vcom-menu-logo";
@@ -2320,6 +2448,11 @@
     if (chatcom) chatcom.addEventListener("click", function () {
       if (window.vcomOpenChatcom) window.vcomOpenChatcom();
     });
+    var accountOpen = menu.querySelector("#vcom-account-open");
+    if (accountOpen) accountOpen.addEventListener("click", function () {
+      if (window.vcomOpenAccount) window.vcomOpenAccount();
+    });
+    wireAccount();
     var okButton = form.querySelector("[data-ok]");
     function newestExpiry() {
       var max = 0;
@@ -2654,6 +2787,9 @@
     var current = caller;
     caller = null;
     if (!current) return;
+    if (current.usageStart && window.vcomRecordCallUse) {
+      window.vcomRecordCallUse(Math.round((Date.now() - current.usageStart) / 1000), !!current.video);
+    }
     current.closed = true;
     if (current.unsub) {
       try { current.unsub(); } catch (eUn) {}
@@ -2737,6 +2873,7 @@
     function markConnected() {
       if (current.closed || token !== window.__vcomGuestToken || current.markedLive) return;
       current.markedLive = true;
+      current.usageStart = current.usageStart || Date.now();
       stopBack();
       fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
       if (window.__vcomSetCallPhase) window.__vcomSetCallPhase("active");
@@ -3490,7 +3627,7 @@
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
       + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + "#vcom-chatcom{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chatcom,#vcom-account-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#1C1C1E}"
       + ".vcom-link-open-icon svg{display:block}"
       + ".vcom-link-open-text{font-weight:600}"
@@ -3547,7 +3684,30 @@
       + "#vcom-group-contacts{flex:1;overflow:auto;margin:12px 0;display:flex;flex-direction:column;gap:8px}"
       + "#vcom-group-contacts label{display:flex;align-items:center;gap:10px;background:#fff;border-radius:12px;padding:12px;font-size:16px}"
       + "#vcom-chatcom-new [data-group-error]{min-height:20px;margin:0 0 8px;color:#C62828;font-size:14px}"
-      + "#vcom-chatcom-new [data-create]{min-height:48px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 17px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}";
+      + "#vcom-chatcom-new [data-create]{min-height:48px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 17px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-account{position:fixed;inset:0;z-index:93;background:#F2F2F7;direction:rtl;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top,0px) + 8px) 16px calc(env(safe-area-inset-bottom,0px) + 20px);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E;overflow:auto}"
+      + "#vcom-account[hidden]{display:none!important}"
+      + "#vcom-account header{display:flex;align-items:center;gap:8px;min-height:48px}"
+      + "#vcom-account header button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
+      + "#vcom-account header b{font-size:20px;font-weight:700}"
+      + ".vcom-allowance{margin:12px 0 16px;background:#fff;border-radius:22px;padding:22px 18px 18px;box-shadow:0 10px 28px rgba(28,39,61,.06)}"
+      + ".vcom-allowance strong{display:block;font-size:42px;font-weight:700;letter-spacing:-.5px}"
+      + ".vcom-allowance span{color:#8E8E93;font-size:15px}"
+      + ".vcom-meter{height:10px;margin-top:16px;border-radius:999px;background:#E5E5EA;overflow:hidden}"
+      + ".vcom-meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#64D2FF,#007AFF)}"
+      + ".vcom-usage{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}"
+      + ".vcom-usage div{background:#fff;border-radius:18px;padding:16px;box-shadow:0 8px 20px rgba(28,39,61,.05)}"
+      + ".vcom-usage b{display:block;font-size:26px;font-weight:700}"
+      + ".vcom-usage span{color:#8E8E93;font-size:13px}"
+      + ".vcom-current{min-height:22px;margin:0 0 12px;color:#3A3A3C;font-size:15px;font-weight:600}"
+      + "#vcom-account [data-upgrade]{min-height:52px;border:0;border-radius:16px;background:#007AFF;color:#fff;font:700 17px/1 inherit;margin:0 0 14px}"
+      + ".vcom-plan{display:flex;align-items:center;gap:14px;width:100%;text-align:right;background:#fff;border:2px solid transparent;border-radius:22px;padding:16px;margin:0 0 12px;box-shadow:0 10px 24px rgba(28,39,61,.06)}"
+      + ".vcom-plan.on{border-color:#007AFF}"
+      + ".vcom-plan img{width:64px;height:64px;object-fit:contain;flex:0 0 64px}"
+      + ".vcom-plan strong{display:block;font-size:20px;letter-spacing:.2px}"
+      + ".vcom-plan small{display:block;margin-top:4px;color:#8E8E93;font-size:13px;font-weight:500}"
+      + "#vcom-account [data-status]{min-height:20px;margin:0;color:#C62828;font-size:14px}"
+      + "#vcom-account [data-plans][hidden]{display:none!important}";
   }
   function guestCss() {
     return ""

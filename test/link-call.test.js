@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid14"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid15"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -784,4 +784,47 @@ test("ended call videos are hidden so they do not cover the app", function () {
   assert.equal(result.shown, 0);
   assert.equal(el.hidden, true);
   assert.equal(el.style.zIndex, "0");
+});
+
+test("account status reads one summary and a plan choice is one write", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  const admin = fs.readFileSync(path.join(ROOT, "admin", "index.html"), "utf8");
+  assert.match(src, />מצב חשבון</);
+  assert.match(src, /VCOM PLUS/);
+  assert.match(src, /VCOM EXTRA PLUS/);
+  assert.match(src, /\/icons\/vcom-handset\.png/);
+  assert.match(src, /שדרוג מסלול/);
+  assert.equal(admin.includes("ממתינים לאישור"), false);
+  assert.equal(admin.includes("בקשות לאישור"), false);
+  assert.match(admin, /ניתוק מנוי/);
+  assert.match(admin, /userId: "retired"/);
+  const rules = fs.readFileSync(path.join(ROOT, "firestore.rules"), "utf8");
+  assert.match(rules, /allow delete: if isAdmin\(\);/);
+  assert.match(rules, /request\.resource\.data\.userId == "retired"/);
+  const w = loadLink();
+  assert.equal(w.vcomPhoneKey("020-824529"), "020824529");
+  assert.equal(w.vcomPhoneKey("0501234567"), "");
+  const view = w.vcomUsageView({ voiceSeconds: 90 * 60, videoCalls: 2, plan: "extra" });
+  assert.equal(view.minutes, 90);
+  assert.equal(view.video, 2);
+  assert.equal(view.cap, 3000);
+  assert.equal(view.plan, "VCOM EXTRA PLUS");
+  assert.ok(Math.abs(view.ratio - 90 / 3000) < 0.0001);
+  const full = w.vcomUsageView({ voiceSeconds: 4000 * 60, videoCalls: 0, plan: "plus" });
+  assert.equal(full.ratio, 1);
+  assert.equal(full.plan, "VCOM PLUS");
+  let writes = 0;
+  w.__vcomUid = "user-1";
+  w.__vcomUsageAt = 0;
+  w.firebase_firestore = {
+    getFirestore: function () { return {}; },
+    doc: function () { return { id: "user-1" }; },
+    updateDoc: function () { writes += 1; return Promise.resolve(); },
+    increment: function (n) { return { inc: n }; }
+  };
+  assert.equal(w.vcomRecordCallUse(0, false), false);
+  assert.equal(w.vcomRecordCallUse(42, true), true);
+  assert.equal(writes, 1);
+  assert.equal(w.vcomRecordCallUse(42, true), false);
+  assert.equal(writes, 1);
 });
