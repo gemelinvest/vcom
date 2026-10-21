@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>ניהול VCOM</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #102033;
+      --muted: #5C6B80;
+      --line: #D9E2EC;
+      --blue: #0B6BCB;
+      --bg: #E7EEF6;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: 0.55; cursor: default; }
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 18px 28px;
+      background: #0E1C2F;
+      color: #fff;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, #3DDCFF, #0B6BCB);
+    }
+    .brand h1 { margin: 0; font-size: 22px; letter-spacing: 0.4px; }
+    .brand p { margin: 2px 0 0; color: #B7C5D6; font-size: 13px; }
+    .actions { display: flex; gap: 8px; align-items: center; }
+    .actions button, .primary, .ghost {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 16px;
+    }
+    .actions button, .primary { background: var(--blue); color: #fff; }
+    .ghost, button.secondary { background: #E8EEF5; color: var(--ink); }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 22px; }
+    .stat, .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 10px 30px rgba(16, 32, 51, 0.04);
+    }
+    .stat { padding: 18px 20px; }
+    .stat span { display: block; color: var(--muted); font-size: 13px; }
+    .stat strong { display: block; margin-top: 6px; font-size: 32px; }
+    .card { padding: 20px; }
+    .login-wrap {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at top, rgba(11, 107, 203, 0.18), transparent 42%),
+        #0E1C2F;
+    }
+    .login { width: min(440px, 100%); color: var(--ink); }
+    label { display: block; margin: 14px 0 6px; color: var(--muted); }
+    input, .search {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #fff;
+    }
+    .error { color: #B42318; min-height: 22px; }
+    .section-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin: 8px 0 14px; }
+    h2 { margin: 0; font-size: 18px; }
+    .search { max-width: 280px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: right; padding: 14px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .tag { display: inline-block; border-radius: 999px; padding: 4px 10px; background: #E8EEF5; font-size: 13px; }
+    .tag.on { background: #DDF5E5; color: #0E7A32; }
+    .row-actions { display: flex; gap: 8px; align-items: center; }
+    .row-actions button { border: 0; border-radius: 10px; padding: 8px 12px; background: var(--blue); color: #fff; }
+    button.danger { background: #fff; color: #B42318; border: 1px solid #F3C7C3; }
+    .empty { color: var(--muted); padding: 8px 0; }
+    .table-card { overflow: auto; }
+    @media (max-width: 800px) {
+      .stats { grid-template-columns: 1fr; }
+      .top, .section-head { align-items: stretch; flex-direction: column; }
+      .search { max-width: none; }
+      main { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="login" class="login-wrap">
+    <section class="card login">
+      <div class="brand" style="margin-bottom:18px">
+        <div class="mark"></div>
+        <div>
+          <h1>VCOM</h1>
+          <p>מרכז שליטה</p>
+        </div>
+      </div>
+      <h2>כניסה למערכת הניהול</h2>
+      <form id="login-form">
+        <label for="username">משתמש</label>
+        <input id="username" type="text" autocomplete="username" required>
+        <label for="password">סיסמה</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <p id="login-error" class="error"></p>
+        <button class="primary" type="submit">כניסה</button>
+      </form>
+    </section>
+  </div>
+  <div id="panel" hidden>
+    <header class="top">
+      <div class="brand">
+        <div class="mark"></div>
+        <div>
+          <h1>VCOM</h1>
+          <p>מרכז שליטה לקווים ולמנויים</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="send-update" hidden type="button">שלח עדכון</button>
+        <button id="logout" class="secondary" hidden type="button">התנתק</button>
+      </div>
+    </header>
+    <main>
+      <section class="stats">
+        <div class="stat"><span>מנויים</span><strong id="stat-total">0</strong></div>
+        <div class="stat"><span>קווים פעילים</span><strong id="stat-live">0</strong></div>
+      </section>
+      <div class="section-head">
+        <h2>כל המנויים</h2>
+        <input id="user-search" class="search" type="search" placeholder="חיפוש לפי שם או מספר">
+      </div>
+      <div class="card table-card">
+        <table>
+          <thead>
+            <tr><th>שם</th><th>מספר</th><th>אימייל</th><th>מצב</th><th>פעולה</th></tr>
+          </thead>
+          <tbody id="users"></tbody>
+        </table>
+      </div>
+    </main>
+  </div>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+    import { getFirestore, collection, onSnapshot, doc, getDoc, updateDoc, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
+    const app = initializeApp({
+      apiKey: "AIzaSyCN7q0RH1uew-Sb4xyl8YNSEPZM-jqaQJI",
+      authDomain: "voip-call-app-7d0c3.firebaseapp.com",
+      projectId: "voip-call-app-7d0c3",
+      appId: "1:307204199533:web:bc64335c5b3ab8ef289b64"
+    });
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const login = document.getElementById("login");
+    const panel = document.getElementById("panel");
+    const logout = document.getElementById("logout");
+    const sendUpdate = document.getElementById("send-update");
+    const error = document.getElementById("login-error");
+    const search = document.getElementById("user-search");
+    let stopUsers = null;
+    let allDocs = [];
+    let queryText = "";
+
+    function phone(value) {
+      const digits = String(value || "").replace(/\D/g, "");
+      if (digits.length === 9) return digits.slice(0, 3) + "-" + digits.slice(3);
+      return value || "—";
+    }
+    function nameOf(data) {
+      return data.name || data.displayName || "ללא שם";
+    }
+    function approved(data) {
+      return data.approved !== false && data.lineActive !== false;
+    }
+    async function activate(id) {
+      await updateDoc(doc(db, "users", id), {
+        approved: true,
+        lineActive: true,
+        approvedAt: serverTimestamp()
+      });
+    }
+    function phoneKey(value) {
+      const digits = String(value || "").replace(/\D/g, "");
+      return /^020\d{6}$/.test(digits) ? digits : "";
+    }
+    async function disconnect(id, data) {
+      const numberId = phoneKey(data.phoneNumber);
+      if (numberId) {
+        await setDoc(doc(db, "phoneNumbers", numberId), { userId: "retired", retired: true }, { merge: true });
+      }
+      await deleteDoc(doc(db, "users", id));
+    }
+    function row(id, data) {
+      const tr = document.createElement("tr");
+      const status = approved(data)
+        ? '<span class="tag on">קו פעיל</span>'
+        : '<span class="tag">לא פעיל</span>';
+      tr.innerHTML = "<td></td><td></td><td></td><td>" + status + "</td><td></td>";
+      tr.children[0].textContent = nameOf(data);
+      tr.children[1].textContent = phone(data.phoneNumber);
+      tr.children[2].textContent = /^n[0-9a-f]{32}@/i.test(data.email || "") ? "—" : (data.email || "—");
+      const actions = document.createElement("div");
+      actions.className = "row-actions";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "הפעלת קו";
+      button.disabled = approved(data);
+      button.addEventListener("click", function () {
+        button.disabled = true;
+        activate(id).catch(function () { button.disabled = false; });
+      });
+      const cut = document.createElement("button");
+      cut.type = "button";
+      cut.className = "danger";
+      cut.textContent = "ניתוק מנוי";
+      cut.addEventListener("click", function () {
+        const label = nameOf(data) + " " + phone(data.phoneNumber);
+        if (!window.confirm("לנתק את המנוי " + label + " ולמחוק את המספר לצמיתות?")) return;
+        cut.disabled = true;
+        disconnect(id, data).catch(function () {
+          cut.disabled = false;
+          window.alert("ניתוק המנוי נכשל.");
+        });
+      });
+      actions.appendChild(button);
+      actions.appendChild(cut);
+      tr.children[4].appendChild(actions);
+      return tr;
+    }
+    function render(docs) {
+      const body = document.getElementById("users");
+      body.replaceChildren();
+      document.getElementById("stat-total").textContent = String(allDocs.length);
+      document.getElementById("stat-live").textContent = String(allDocs.filter(function (item) { return approved(item.data); }).length);
+      if (docs.length === 0) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = '<td colspan="5" class="empty">אין מנויים להצגה.</td>';
+        body.appendChild(tr);
+      } else {
+        docs.forEach(function (item) { body.appendChild(row(item.id, item.data)); });
+      }
+    }
+    function applySearch() {
+      const needle = queryText.trim().toLowerCase();
+      const shown = allDocs.filter(function (item) {
+        if (!needle) return true;
+        const blob = (nameOf(item.data) + " " + (item.data.phoneNumber || "") + " " + (item.data.email || "")).toLowerCase();
+        return blob.indexOf(needle) >= 0;
+      });
+      render(shown);
+    }
+    search.addEventListener("input", function () {
+      queryText = search.value || "";
+      applySearch();
+    });
+    function openPanel(user) {
+      login.hidden = true;
+      panel.hidden = false;
+      logout.hidden = false;
+      sendUpdate.hidden = false;
+      if (stopUsers) stopUsers();
+      stopUsers = onSnapshot(collection(db, "users"), function (snap) {
+        allDocs = snap.docs.map(function (item) {
+          return { id: item.id, data: item.data() };
+        });
+        allDocs.sort(function (a, b) {
+          return nameOf(a.data).localeCompare(nameOf(b.data), "he");
+        });
+        applySearch();
+      });
+      return user;
+    }
+    document.getElementById("login-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      error.textContent = "";
+      var name = document.getElementById("username").value.trim();
+      var password = document.getElementById("password").value;
+      if (name !== "אוריה" || password !== "1234") {
+        error.textContent = "המשתמש או הסיסמה לא נכונים.";
+        return;
+      }
+      signInWithEmailAndPassword(auth, "oriya.admin@voip-call-app-7d0c3.web.app", "VcomOriya1234")
+        .catch(function () { error.textContent = "המשתמש או הסיסמה לא נכונים."; });
+    });
+    logout.addEventListener("click", function () { signOut(auth); });
+    sendUpdate.addEventListener("click", function () {
+      sendUpdate.disabled = true;
+      setDoc(doc(db, "app", "update"), {
+        revision: Date.now(),
+        sentAt: serverTimestamp()
+      }, { merge: true }).then(function () {
+        sendUpdate.disabled = false;
+        sendUpdate.textContent = "העדכון נשלח";
+        setTimeout(function () { sendUpdate.textContent = "שלח עדכון"; }, 2000);
+      }).catch(function () {
+        sendUpdate.disabled = false;
+        sendUpdate.textContent = "השליחה נכשלה";
+      });
+    });
+    onAuthStateChanged(auth, function (user) {
+      if (!user) {
+        if (stopUsers) stopUsers();
+        login.hidden = false;
+        panel.hidden = true;
+        logout.hidden = true;
+        sendUpdate.hidden = true;
+        return;
+      }
+      getDoc(doc(db, "admins", user.uid)).then(function (snap) {
+        if (!snap.exists()) {
+          error.textContent = "לחשבון הזה אין הרשאת ניהול.";
+          return signOut(auth);
+        }
+        openPanel(user);
+      }).catch(function () {
+        error.textContent = "לא הצלחנו לפתוח את מערכת הניהול.";
+      });
+    });
+  </script>
+</body>
+</html>
