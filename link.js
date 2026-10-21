@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid3";
+  window.__VCOM_LINK_BUILD = "vid4";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -269,10 +269,124 @@
     var skin = document.createElement("style");
     skin.id = "vcom-video-skin";
     skin.textContent = ""
-      + "[data-vcom-kind=remote]{position:fixed!important;top:0!important;right:0!important;bottom:0!important;left:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10020!important;background:#111!important;pointer-events:none!important;transform:translateZ(0)!important;border-radius:0!important}"
-      + "[data-vcom-kind=local]{position:fixed!important;top:calc(env(safe-area-inset-top,0px) + 72px)!important;left:16px!important;right:auto!important;bottom:auto!important;width:112px!important;height:156px!important;max-width:112px!important;max-height:156px!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10021!important;background:#222!important;pointer-events:none!important;transform:scaleX(-1)!important;border-radius:16px!important}"
+      + "[data-vcom-kind=remote]{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10020!important;background:#000!important;pointer-events:none!important;transform:translateZ(0)!important}"
+      + "[data-vcom-kind=local]{position:fixed!important;margin:0!important;object-fit:cover!important;object-position:center center!important;z-index:10021!important;background:#111!important;pointer-events:none!important;transform:scaleX(-1)!important;overflow:hidden!important}"
       + "[data-vcom-kind][hidden]{display:none!important;width:0!important;height:0!important}";
     try { document.head.appendChild(skin); } catch (eSkin) {}
+  }
+  function dockInsets() {
+    var vh = window.innerHeight || 0;
+    var head = 108;
+    var dock = 168;
+    if (vh) {
+      head = Math.round(Math.max(96, vh * 0.12));
+      dock = Math.round(Math.max(148, vh * 0.2));
+    }
+    return { head: head, dock: dock, vh: vh };
+  }
+  function snapPx(value) {
+    var n = Number(value);
+    if (!isFinite(n)) return 0;
+    return Math.round(n / 2) * 2;
+  }
+  function readRect(node) {
+    if (!node || !node.getBoundingClientRect) return null;
+    try {
+      var rect = node.getBoundingClientRect();
+      if (!rect || rect.width < 24 || rect.height < 24) return null;
+      return { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
+    } catch (eRect) { return null; }
+  }
+  function viewRect(video, kind) {
+    if (!video) return null;
+    var node = video;
+    var parent = video.parentElement;
+    if (parent && /platform-view/i.test(String(parent.tagName || ""))) node = parent;
+    if (kind === "local") {
+      var walk = node;
+      var best = null;
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      for (var i = 0; i < 5 && walk; i++) {
+        var rect = readRect(walk);
+        if (rect && (!vw || rect.width <= vw * 0.62) && (!vh || rect.height <= vh * 0.7)) {
+          if (!best || rect.width * rect.height >= best.width * best.height) best = rect;
+        }
+        walk = walk.parentElement;
+      }
+      if (best) return best;
+    }
+    return readRect(node);
+  }
+  function placeCallVideo(el, kind, rect) {
+    if (!el) return false;
+    if (!rect && el.__vcomBox) return false;
+    var top, left, width, height, right, bottom, radius;
+    if (rect && kind === "local") {
+      top = snapPx(rect.top) + "px";
+      left = snapPx(rect.left) + "px";
+      width = snapPx(rect.width) + "px";
+      height = snapPx(rect.height) + "px";
+      right = "auto";
+      bottom = "auto";
+      radius = Math.round(Math.max(18, Math.min(28, rect.width * 0.14))) + "px";
+    } else if (rect && kind === "remote") {
+      var insets = dockInsets();
+      var boxTop = rect.top;
+      var boxBottom = rect.top + rect.height;
+      if (insets.vh && rect.height > insets.vh * 0.55) {
+        if (boxTop < insets.head) boxTop = insets.head;
+        if (boxBottom > insets.vh - insets.dock) boxBottom = insets.vh - insets.dock;
+      }
+      var boxHeight = snapPx(boxBottom - boxTop);
+      if (boxHeight < 80) {
+        boxTop = rect.top;
+        boxHeight = snapPx(rect.height);
+      }
+      top = snapPx(boxTop) + "px";
+      left = snapPx(rect.left) + "px";
+      width = snapPx(rect.width) + "px";
+      height = boxHeight + "px";
+      right = "auto";
+      bottom = "auto";
+      radius = "0";
+    } else if (kind === "local") {
+      top = "calc(env(safe-area-inset-top, 0px) + 12px)";
+      left = "8px";
+      width = "min(168px, 40vw)";
+      height = "min(292px, 36vh)";
+      right = "auto";
+      bottom = "auto";
+      radius = "24px";
+    } else {
+      var fallback = dockInsets();
+      top = fallback.head + "px";
+      left = "0px";
+      width = "100%";
+      height = "auto";
+      right = "0px";
+      bottom = fallback.dock + "px";
+      radius = "0";
+    }
+    var sig = [kind, top, left, width, height, right, bottom, radius].join("|");
+    if (el.__vcomBox === sig) return false;
+    el.__vcomBox = sig;
+    el.style.position = "fixed";
+    el.style.top = top;
+    el.style.left = left;
+    el.style.width = width;
+    el.style.height = height;
+    el.style.right = right;
+    el.style.bottom = bottom;
+    el.style.borderRadius = radius;
+    el.style.objectFit = "cover";
+    el.style.objectPosition = "center center";
+    el.style.margin = "0";
+    el.style.zIndex = kind === "local" ? "10021" : "10020";
+    el.style.pointerEvents = "none";
+    el.style.background = kind === "local" ? "#111" : "#000";
+    el.style.transform = kind === "local" ? "scaleX(-1)" : "translateZ(0)";
+    return true;
   }
   function displayStream(stream) {
     var tracks = stream.getVideoTracks();
@@ -286,11 +400,12 @@
     cache[key] = copy;
     return copy;
   }
-  window.vcomAttachCallVideo = function (el, stream, kind) {
+  window.vcomAttachCallVideo = function (el, stream, kind, rect) {
     if (!el || !window.vcomCallHasVideo(stream)) return { ok: false, reason: "no-video" };
     if (kind !== "local" && kind !== "remote") kind = window.vcomVideoIsLocal(el) ? "local" : "remote";
     ensureVideoSkin();
     if (el.__vcomStream === stream && el.__vcomKind === kind && el.__vcomLifted && !el.hidden) {
+      placeCallVideo(el, kind, rect);
       return { ok: true, kind: kind, stable: true };
     }
     if (el.srcObject !== stream) el.srcObject = stream;
@@ -308,33 +423,7 @@
       el.setAttribute("data-vcom-lifted", "1");
       el.setAttribute("data-vcom-kind", kind);
     } catch (eAttr) {}
-    el.style.position = "fixed";
-    el.style.objectFit = "cover";
-    el.style.objectPosition = "center center";
-    el.style.pointerEvents = "none";
-    el.style.background = kind === "local" ? "#222" : "#111";
-    el.style.margin = "0";
-    if (kind === "local") {
-      el.style.zIndex = "10021";
-      el.style.top = "calc(env(safe-area-inset-top, 0px) + 72px)";
-      el.style.right = "auto";
-      el.style.bottom = "auto";
-      el.style.left = "16px";
-      el.style.width = "112px";
-      el.style.height = "156px";
-      el.style.borderRadius = "16px";
-      el.style.transform = "scaleX(-1)";
-    } else {
-      el.style.zIndex = "10020";
-      el.style.top = "0";
-      el.style.right = "0";
-      el.style.bottom = "0";
-      el.style.left = "0";
-      el.style.width = "100%";
-      el.style.height = "100%";
-      el.style.borderRadius = "0";
-      el.style.transform = "translateZ(0)";
-    }
+    placeCallVideo(el, kind, rect);
     if (el.paused !== false) {
       var play = el.play && el.play();
       if (play && play.catch) play.catch(function () {});
@@ -345,6 +434,7 @@
     if (!el) return;
     el.hidden = true;
     el.__vcomLifted = false;
+    el.__vcomBox = "";
     try { el.setAttribute("hidden", "true"); } catch (eHid) {}
     el.style.zIndex = "0";
     el.style.width = "0";
@@ -411,7 +501,9 @@
     remotes.forEach(function (video) { video.__vcomKind = "remote"; });
     return {
       local: locals.length ? locals[0].srcObject : null,
-      remote: remotes.length ? remotes[0].srcObject : null
+      remote: remotes.length ? remotes[0].srcObject : null,
+      localEl: locals.length ? locals[0] : null,
+      remoteEl: remotes.length ? remotes[0] : null
     };
   }
   window.vcomLiftCallVideos = function () {
@@ -448,7 +540,7 @@
     var stage = window.__vcomStageVideos || {};
     var picked = flutter.length ? classifyFlutterVideos(flutter) : { local: null, remote: null };
     if (!directRemote && picked.remote && window.vcomCallHasVideo(picked.remote)) {
-      window.vcomAttachCallVideo(stageVideo("remote"), displayStream(picked.remote), "remote");
+      window.vcomAttachCallVideo(stageVideo("remote"), displayStream(picked.remote), "remote", viewRect(picked.remoteEl, "remote"));
       shown += 1;
     } else if (directRemote || (sawFlutter && !picked.remote)) {
       if (stage.remote) window.vcomHideLiftedVideo(stage.remote);
@@ -456,7 +548,7 @@
       window.vcomHideLiftedVideo(stage.remote);
     }
     if (!directLocal && picked.local && window.vcomCallHasVideo(picked.local)) {
-      window.vcomAttachCallVideo(stageVideo("local"), displayStream(picked.local), "local");
+      window.vcomAttachCallVideo(stageVideo("local"), displayStream(picked.local), "local", viewRect(picked.localEl, "local"));
       shown += 1;
     } else if (directLocal || (sawFlutter && !picked.local)) {
       if (stage.local) window.vcomHideLiftedVideo(stage.local);
@@ -471,7 +563,7 @@
     var gum = function (spec) { return devices.getUserMedia(spec); };
     var audio = { echoCancellation: true, noiseSuppression: true };
     if (!wantVideo) return gum({ audio: audio, video: false });
-    return gum({ audio: audio, video: { facingMode: "user" } }).catch(function () {
+    return gum({ audio: audio, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } }).catch(function () {
       return gum({ audio: audio, video: true });
     }).catch(function () {
       return gum({ audio: true, video: true });
@@ -2248,8 +2340,8 @@
       + ".vcom-link-copy{display:block;width:100%;box-sizing:border-box;min-height:44px;margin-top:8px;border:0;border-radius:12px;background:#007AFF;color:#fff;padding:0 12px;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-phone{display:block;width:100%;margin-top:8px;font-size:22px;font-weight:700;letter-spacing:.4px;direction:ltr;unicode-bidi:isolate;text-align:right;white-space:nowrap;touch-action:manipulation}"
       + ".vcom-link-meta{display:block;margin-top:4px;color:#007AFF;font-size:14px;font-weight:600;text-align:right}"
-      + "#vcom-guest-remote-video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;z-index:10020;background:#111;pointer-events:none;transform:translateZ(0)}"
-      + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 72px);left:16px;width:112px;height:156px;object-fit:cover;object-position:center;border-radius:16px;z-index:10021;background:#222;transform:scaleX(-1);pointer-events:none}"
+      + "#vcom-guest-remote-video{position:fixed;left:0;right:0;top:108px;bottom:168px;width:100%;height:auto;object-fit:cover;object-position:center;z-index:10020;background:#000;pointer-events:none;transform:translateZ(0)}"
+      + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;z-index:10021;background:#111;transform:scaleX(-1);pointer-events:none}"
       + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}";
   }
   function guestCss() {
@@ -2265,8 +2357,8 @@
       + ".guest-logo .v{color:#34C759}"
       + ".guest-logo .com{color:#007AFF}"
       + ".guest-stage{position:absolute;inset:0;z-index:0;background:#111}"
-      + ".guest-stage [data-remote]{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;background:#111;transform:translateZ(0)}"
-      + ".guest-stage [data-local]{position:fixed;top:calc(env(safe-area-inset-top,0px) + 72px);left:16px;width:112px;height:156px;object-fit:cover;object-position:center;border-radius:16px;transform:scaleX(-1);background:#222}"
+      + ".guest-stage [data-remote]{position:fixed;left:0;right:0;top:108px;bottom:168px;width:100%;height:auto;object-fit:cover;object-position:center;background:#000;transform:translateZ(0)}"
+      + ".guest-stage [data-local]{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;transform:scaleX(-1);background:#111}"
       + ".guest-call header,.guest-mid,.guest-controls{position:relative;z-index:1}"
       + ".guest-call.video .guest-mid h2,.guest-call.video .guest-mid p{color:#fff;text-shadow:0 1px 8px rgba(0,0,0,.65)}"
       + ".guest-mid{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}"
