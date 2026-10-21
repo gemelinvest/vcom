@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid12"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid13"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -277,8 +277,8 @@ test("chat messages can carry a voice note, a photo, or a video", function () {
   assert.equal(w.vcomComposerOnScreen([{ label: "", role: "textbox", visible: true, bottom: false }]), false);
   assert.equal(w.vcomChatOverlayOpen(false, false, true, Date.now(), Date.now()), false);
   assert.equal(w.vcomChatOverlayOpen(true, true, false, 0, Date.now()), true);
-  assert.equal(w.vcomChatOverlayOpen(true, false, false, Date.now(), Date.now()), false);
-  assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now() - 5000, Date.now()), false);
+  assert.equal(w.vcomChatOverlayOpen(true, false, false, Date.now(), Date.now()), true);
+  assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now() - 5000, Date.now()), true);
   assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now(), Date.now()), true);
   assert.equal(w.vcomChatOverlayOpen(true, false, true, 0, Date.now()), true);
   assert.equal(w.vcomCallShouldRelay("failed", false), true);
