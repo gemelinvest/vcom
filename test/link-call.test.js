@@ -339,7 +339,7 @@ test("owner and guest ontrack attach video through vcomAttachCallVideo", functio
   assert.match(src, /vcomAttachCallVideo\(nodes\.localVideo, stream, "local"\)/);
 });
 
-test("vcomLiftCallVideos keeps Flutter video in place and shows a stable copy", function () {
+test("vcomLiftCallVideos keeps each Flutter video inside its platform-view slot", function () {
   const w = loadLink();
   const body = w.document.body;
   const moved = [];
@@ -348,56 +348,66 @@ test("vcomLiftCallVideos keeps Flutter video in place and shows a stable copy", 
     moved.push(node);
     return node;
   };
-  const remote = {
-    id: "video_RTCVideoRenderer-remote",
-    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "remote-v" }]; } },
-    style: {},
-    hidden: false,
-    parentElement: { tagName: "FLT-PLATFORM-VIEW" },
-    attrs: {},
-    setAttribute: function (name, value) { this.attrs[name] = String(value); },
-    removeAttribute: function (name) { delete this.attrs[name]; },
-    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
-    play: function () { return Promise.resolve(); }
-  };
-  const local = {
-    id: "video_RTCVideoRenderer-local",
-    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "local-v" }]; } },
-    style: {},
-    hidden: false,
-    parentElement: { tagName: "FLT-PLATFORM-VIEW" },
-    attrs: { "data-vcom-local": "1" },
-    setAttribute: function (name, value) { this.attrs[name] = String(value); },
-    removeAttribute: function (name) { delete this.attrs[name]; },
-    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
-    play: function () { return Promise.resolve(); }
-  };
+  function video(id, track, local) {
+    return {
+      id: id,
+      srcObject: { getVideoTracks: function () { return [{ kind: "video", id: track }]; } },
+      style: {},
+      hidden: false,
+      paused: false,
+      parentElement: { tagName: "FLT-PLATFORM-VIEW", style: {} },
+      attrs: local ? { "data-vcom-local": "1" } : {},
+      setAttribute: function (name, value) { this.attrs[name] = String(value); },
+      removeAttribute: function (name) { delete this.attrs[name]; },
+      getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+      play: function () { return Promise.resolve(); }
+    };
+  }
+  const remote = video("video_RTCVideoRenderer-remote", "remote-v", false);
+  const local = video("video_RTCVideoRenderer-local", "local-v", true);
   w.document.querySelectorAll = function () { return [remote, local]; };
   const result = w.vcomLiftCallVideos();
   assert.equal(result.shown, 2);
   assert.equal(remote.parentElement.tagName, "FLT-PLATFORM-VIEW");
   assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
-  assert.equal(remote.style.opacity, "0");
-  assert.equal(local.style.opacity, "0");
-  const stageRemote = w.__vcomStageVideos.remote;
-  const stageLocal = w.__vcomStageVideos.local;
-  assert.equal(stageRemote.parentElement, body);
-  assert.equal(stageLocal.parentElement, body);
-  assert.equal(Number(stageRemote.style.zIndex) >= 10020, true);
-  assert.equal(Number(stageLocal.style.zIndex) >= 10021, true);
-  assert.equal(stageRemote.srcObject, remote.srcObject);
-  assert.equal(stageLocal.srcObject, local.srcObject);
-  assert.equal(stageRemote.style.bottom, "168px");
-  assert.equal(stageLocal.style.width, "min(168px, 40vw)");
-  assert.equal(stageLocal.style.height, "min(292px, 36vh)");
+  assert.equal(remote.style.position, "absolute");
+  assert.equal(local.style.position, "absolute");
+  assert.equal(remote.style.width, "100%");
+  assert.equal(local.style.width, "100%");
+  assert.equal(local.style.height, "100%");
+  assert.equal(remote.style.objectFit, "cover");
+  assert.equal(local.style.objectFit, "cover");
+  assert.equal(local.style.transform, "scaleX(-1)");
+  assert.equal(remote.style.transform, "none");
+  assert.equal(remote.style.opacity, "");
+  assert.equal(local.style.opacity, "");
+  assert.equal(remote.style.top, "");
+  assert.equal(w.__vcomStageVideos, undefined);
   let plays = 0;
-  stageRemote.play = function () { plays += 1; return Promise.resolve(); };
-  stageLocal.play = function () { plays += 1; return Promise.resolve(); };
+  remote.play = function () { plays += 1; return Promise.resolve(); };
+  local.play = function () { plays += 1; return Promise.resolve(); };
+  remote.style.position = "fixed";
+  remote.style.top = "0px";
+  remote.style.width = "100%";
+  remote.style.height = "100dvh";
+  remote.style.zIndex = "10020";
+  local.style.position = "fixed";
+  local.style.top = "72px";
+  local.style.width = "112px";
+  local.style.height = "156px";
   const again = w.vcomLiftCallVideos();
   assert.equal(again.shown, 2);
   assert.equal(plays, 0);
-  assert.equal(stageRemote.style.width, "100%");
-  assert.equal(stageLocal.style.width, "min(168px, 40vw)");
+  assert.equal(remote.style.position, "absolute");
+  assert.equal(remote.style.width, "100%");
+  assert.equal(remote.style.height, "100%");
+  assert.equal(remote.style.top, "");
+  assert.equal(remote.style.zIndex, "");
+  assert.equal(local.style.position, "absolute");
+  assert.equal(local.style.width, "100%");
+  assert.equal(local.style.height, "100%");
+  assert.equal(local.style.top, "");
+  assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
   assert.equal(moved.indexOf(remote), -1);
   assert.equal(moved.indexOf(local), -1);
 });
@@ -430,56 +440,55 @@ test("repeat video attach does not restart a playing picture", function () {
   assert.equal(el.style.height, "auto");
 });
 
-test("local preview fills its frame and remote video leaves the call buttons visible", function () {
+test("local preview stays in its frame and a pulled video is put back", function () {
   const w = loadLink();
-  w.innerWidth = 400;
-  w.innerHeight = 800;
   const body = w.document.body;
-  body.appendChild = function (node) {
-    node.parentElement = body;
-    return node;
+  const frame = {
+    tagName: "FLT-PLATFORM-VIEW",
+    style: {},
+    children: [],
+    appendChild: function (node) {
+      node.parentElement = frame;
+      this.children = [node];
+      return node;
+    },
+    querySelector: function () { return this.children[0] || null; }
   };
-  function video(id, track, rect, local) {
-    return {
-      id: id,
-      srcObject: { getVideoTracks: function () { return [{ kind: "video", id: track, readyState: "live" }]; } },
-      style: {},
-      hidden: false,
-      parentElement: {
-        tagName: "FLT-PLATFORM-VIEW",
-        getBoundingClientRect: function () { return rect; },
-        parentElement: null
-      },
-      attrs: local ? { "data-vcom-local": "1" } : {},
-      setAttribute: function (name, value) { this.attrs[name] = String(value); },
-      removeAttribute: function (name) { delete this.attrs[name]; },
-      getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
-      play: function () { return Promise.resolve(); }
-    };
-  }
-  const local = video("video_RTCVideoRenderer-local", "cam", { top: 48, left: 8, width: 160, height: 292 }, true);
-  const remote = video("video_RTCVideoRenderer-remote", "far", { top: 0, left: 0, width: 400, height: 800 }, false);
-  w.document.querySelectorAll = function () { return [remote, local]; };
+  const local = {
+    id: "video_RTCVideoRenderer-local",
+    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "cam", readyState: "live" }]; } },
+    style: { position: "fixed", top: "72px", left: "16px", width: "112px", height: "156px", zIndex: "10021" },
+    hidden: false,
+    paused: true,
+    parentElement: body,
+    attrs: { "data-vcom-local": "1", "data-vcom-lifted": "1" },
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    removeAttribute: function (name) { delete this.attrs[name]; },
+    getAttribute: function (name) { return Object.prototype.hasOwnProperty.call(this.attrs, name) ? this.attrs[name] : null; },
+    play: function () { this.paused = false; return Promise.resolve(); }
+  };
+  w.document.querySelectorAll = function (sel) {
+    if (String(sel).indexOf("flt-platform-view") >= 0) return [frame];
+    return [local];
+  };
   const result = w.vcomLiftCallVideos();
-  assert.equal(result.shown, 2);
-  const stageLocal = w.__vcomStageVideos.local;
-  const stageRemote = w.__vcomStageVideos.remote;
-  assert.equal(stageLocal.style.width, "160px");
-  assert.equal(stageLocal.style.height, "292px");
-  assert.equal(stageLocal.style.top, "48px");
-  assert.equal(stageLocal.style.left, "8px");
-  assert.equal(stageLocal.style.objectFit, "cover");
-  const remoteTop = Number.parseFloat(stageRemote.style.top);
-  const remoteHeight = Number.parseFloat(stageRemote.style.height);
-  assert.equal(remoteTop >= 96, true);
-  assert.equal(remoteTop + remoteHeight <= 800 - 148, true);
+  assert.equal(result.shown, 1);
+  assert.equal(local.parentElement, frame);
+  assert.equal(local.style.position, "absolute");
+  assert.equal(local.style.width, "100%");
+  assert.equal(local.style.height, "100%");
+  assert.equal(local.style.top, "");
+  assert.equal(local.style.left, "");
+  assert.equal(local.style.objectFit, "cover");
+  assert.equal(local.style.transform, "scaleX(-1)");
+  assert.equal(local.attrs["data-vcom-lifted"], undefined);
+  assert.equal(frame.style.overflow, "hidden");
   let plays = 0;
-  stageLocal.play = function () { plays += 1; return Promise.resolve(); };
-  stageRemote.play = function () { plays += 1; return Promise.resolve(); };
+  local.play = function () { plays += 1; return Promise.resolve(); };
   w.vcomLiftCallVideos();
   assert.equal(plays, 0);
-  assert.equal(stageLocal.style.width, "160px");
-  assert.equal(local.parentElement.tagName, "FLT-PLATFORM-VIEW");
+  assert.equal(local.style.width, "100%");
+  assert.equal(local.parentElement, frame);
 });
 
 test("camera tracks stay on the small preview so the remote picture does not swap", function () {
