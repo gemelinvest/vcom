@@ -158,8 +158,22 @@ button { cursor: pointer; }
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
+  position: relative;
   padding: 8px 20px 14px;
 }
+.vcom-wordmark {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  display: flex;
+  direction: ltr;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.vcom-wordmark .v { color: #34C759; }
+.vcom-wordmark .com { color: #007AFF; }
 .hello { margin: 0; color: var(--muted); font-size: 13px; }
 .app-header h2 { margin: 2px 0 0; font-size: 28px; font-weight: 800; }
 .header-id {

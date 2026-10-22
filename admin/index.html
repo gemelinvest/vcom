@@ -93,6 +93,8 @@
     th { color: var(--muted); font-size: 12px; font-weight: 700; }
     .tag { display: inline-block; border-radius: 999px; padding: 4px 10px; background: #E8EEF5; font-size: 13px; }
     .tag.on { background: #DDF5E5; color: #0E7A32; }
+    .tag.wait { background: #FFF4D6; color: #8A5A00; }
+    .plans { display: flex; flex-wrap: wrap; gap: 6px; }
     .row-actions { display: flex; gap: 8px; align-items: center; }
     .row-actions button { border: 0; border-radius: 10px; padding: 8px 12px; background: var(--blue); color: #fff; }
     button.danger { background: #fff; color: #B42318; border: 1px solid #F3C7C3; }
@@ -153,7 +155,7 @@
       <div class="card table-card">
         <table>
           <thead>
-            <tr><th>שם</th><th>מספר</th><th>אימייל</th><th>מצב</th><th>פעולה</th></tr>
+            <tr><th>שם</th><th>מספר</th><th>מסלולים</th><th>מצב</th><th>פעולה</th></tr>
           </thead>
           <tbody id="users"></tbody>
         </table>
@@ -212,6 +214,30 @@
       }
       await deleteDoc(doc(db, "users", id));
     }
+    function planName(id) {
+      if (id === "extra") return "VCOM EXTRA PLUS";
+      if (id === "plus") return "VCOM PLUS";
+      return "";
+    }
+    function chosenPlan(data) {
+      return data.planRequest === "plus" || data.planRequest === "extra" ? data.planRequest : "";
+    }
+    function activePlan(data) {
+      return data.plan === "plus" || data.plan === "extra" ? data.plan : "";
+    }
+    function plansCell(data) {
+      const chosen = chosenPlan(data);
+      const active = activePlan(data);
+      const cell = document.createElement("div");
+      cell.className = "plans";
+      ["plus", "extra"].forEach(function (id) {
+        const tag = document.createElement("span");
+        tag.className = "tag" + (active === id ? " on" : "") + (chosen === id && chosen !== active ? " wait" : "");
+        tag.textContent = planName(id) + (chosen === id && chosen !== active ? " · ממתין" : "");
+        cell.appendChild(tag);
+      });
+      return cell;
+    }
     function row(id, data) {
       const tr = document.createElement("tr");
       const status = approved(data)
@@ -220,7 +246,7 @@
       tr.innerHTML = "<td></td><td></td><td></td><td>" + status + "</td><td></td>";
       tr.children[0].textContent = nameOf(data);
       tr.children[1].textContent = phone(data.phoneNumber);
-      tr.children[2].textContent = /^n[0-9a-f]{32}@/i.test(data.email || "") ? "—" : (data.email || "—");
+      tr.children[2].appendChild(plansCell(data));
       const actions = document.createElement("div");
       actions.className = "row-actions";
       const button = document.createElement("button");
@@ -231,6 +257,20 @@
         button.disabled = true;
         activate(id).catch(function () { button.disabled = false; });
       });
+      const request = chosenPlan(data);
+      if (request && request !== activePlan(data)) {
+        const approve = document.createElement("button");
+        approve.type = "button";
+        approve.textContent = "אישור מסלול";
+        approve.addEventListener("click", function () {
+          approve.disabled = true;
+          updateDoc(doc(db, "users", id), { plan: request, planRequest: "" }).catch(function () {
+            approve.disabled = false;
+            window.alert("אישור המסלול נכשל.");
+          });
+        });
+        actions.appendChild(approve);
+      }
       const cut = document.createElement("button");
       cut.type = "button";
       cut.className = "danger";
@@ -266,7 +306,7 @@
       const needle = queryText.trim().toLowerCase();
       const shown = allDocs.filter(function (item) {
         if (!needle) return true;
-        const blob = (nameOf(item.data) + " " + (item.data.phoneNumber || "") + " " + (item.data.email || "")).toLowerCase();
+        const blob = (nameOf(item.data) + " " + (item.data.phoneNumber || "")).toLowerCase();
         return blob.indexOf(needle) >= 0;
       });
       render(shown);

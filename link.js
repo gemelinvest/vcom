@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid17";
+  window.__VCOM_LINK_BUILD = "vid18";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -125,6 +125,7 @@
       window.__vcomRingGain = null;
     }
   }
+  window.vcomIncomingNotes = [659.25, 987.77, 830.61, 1174.66];
   function startOsc() {
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
@@ -133,32 +134,40 @@
     if (ctx.state === "suspended" && ctx.resume) ctx.resume();
     stopOsc();
     var master = ctx.createGain();
-    master.gain.value = 0.55;
+    master.gain.value = 0.42;
     master.connect(ctx.destination);
     window.__vcomRingGain = master;
     window.__vcomRingOn = true;
-    var notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 659.25];
-    var step = 0.22;
+    var notes = window.vcomIncomingNotes;
+    var step = 0.28;
     var play = function () {
       if (!window.__vcomRingOn) return;
       var t0 = ctx.currentTime + 0.02;
       notes.forEach(function (freq, i) {
         var osc = ctx.createOscillator();
+        var over = ctx.createOscillator();
         var gain = ctx.createGain();
         var start = t0 + i * step;
+        var last = i === notes.length - 1;
+        var hold = last ? 0.55 : step - 0.04;
         osc.type = "sine";
+        over.type = "triangle";
         osc.frequency.value = freq;
+        over.frequency.value = freq * 2;
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.85, start + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + step - 0.02);
+        gain.gain.exponentialRampToValueAtTime(last ? 0.7 : 0.9, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + hold);
         osc.connect(gain);
+        over.connect(gain);
         gain.connect(master);
         osc.start(start);
-        osc.stop(start + step);
+        over.start(start);
+        osc.stop(start + hold + 0.02);
+        over.stop(start + hold + 0.02);
       });
     };
     play();
-    window.__vcomRingTimer = setInterval(play, 2400);
+    window.__vcomRingTimer = setInterval(play, 2600);
   }
   function unlockRing() {
     if (ringUnlocked) return;
@@ -188,17 +197,17 @@
     var menu = document.getElementById("vcom-link-menu");
     if (menu) menu.hidden = true;
     try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
-    ringAudio.muted = false;
-    ringAudio.volume = 1;
-    ringAudio.loop = true;
-    try { ringAudio.currentTime = 0; } catch (e) {}
-    var pending = ringAudio.play();
-    if (pending && pending.then) {
-      pending.then(function () { window.__vcomRingErr = ""; stopOsc(); }).catch(function (err) {
+    try { ringAudio.pause(); ringAudio.currentTime = 0; } catch (e) {}
+    if (window.AudioContext || window.webkitAudioContext) startOsc();
+    else {
+      ringAudio.muted = false;
+      ringAudio.volume = 1;
+      ringAudio.loop = true;
+      var pending = ringAudio.play();
+      if (pending && pending.catch) pending.catch(function (err) {
         window.__vcomRingErr = String(err && err.message || err);
-        if (window.__vcomRinging) startOsc();
       });
-    } else if (ringAudio.paused) startOsc();
+    }
   };
   window.vcomStopRing = function () {
     window.__vcomRinging = false;
@@ -800,6 +809,10 @@
       window.vcomAttachCallVideo(video, stream, window.vcomVideoIsLocal(video) ? "local" : "remote");
       shown += 1;
     }
+    var list = [];
+    for (var n = 0; n < nodes.length; n++) list.push(nodes[n]);
+    var settled = window.vcomSettleLocalPreviews(list);
+    if (settled.hidden) shown = Math.max(0, shown - settled.hidden);
     return { ok: true, shown: shown };
   };
   window.vcomOpenCallMedia = function (wantVideo) {
@@ -1396,9 +1409,68 @@
     if (chatTab == null || chatTab === "") return false;
     return (tab | 0) === (chatTab | 0);
   };
-  window.vcomChatOverlayOpen = function (chatOpen, grouped) {
+  window.vcomChatOverlayOpen = function (chatOpen, grouped, composer, seenAt, now) {
     if (grouped) return true;
-    return !!chatOpen;
+    if (!chatOpen) return false;
+    if (composer === true || composer == null) return true;
+    var at = Number(seenAt) || 0;
+    if (!at) return false;
+    return (Number(now) || 0) - at < 800;
+  };
+  window.vcomChatButtonsOpen = function (overlayOpen, composer, seenAt, now) {
+    if (!overlayOpen) return false;
+    if (composer !== false) return true;
+    var at = Number(seenAt) || 0;
+    if (!at) return false;
+    return (Number(now) || 0) - at < 350;
+  };
+  window.vcomMessageTapTarget = function (buttons, x, y) {
+    var found = null;
+    (buttons || []).forEach(function (box) {
+      if (!box || found) return;
+      if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) found = box;
+    });
+    return found;
+  };
+  window.vcomHeaderLogoVisible = function (state) {
+    state = state || {};
+    if (state.guest || state.ringing || state.onCall || state.account) return false;
+    return true;
+  };
+  window.vcomLocalPreviewOn = function (video) {
+    var stream = video && video.srcObject;
+    if (!stream || !stream.getVideoTracks) return false;
+    var tracks = stream.getVideoTracks();
+    for (var i = 0; i < tracks.length; i++) {
+      var track = tracks[i];
+      if (track && track.readyState !== "ended" && track.enabled !== false) return true;
+    }
+    return false;
+  };
+  window.vcomSettleLocalPreviews = function (videos) {
+    var locals = [];
+    (videos || []).forEach(function (video) {
+      if (!video) return;
+      var local = video.id === "vcom-guest-local-video" || video.id === "vcom-stage-local";
+      if (!local && video.getAttribute && (video.getAttribute("data-vcom-local") === "1" || video.getAttribute("data-vcom-kind") === "local")) local = true;
+      if (!local && window.vcomStreamIsLocal && window.vcomStreamIsLocal(video.srcObject)) local = true;
+      if (local) locals.push(video);
+    });
+    var keep = null;
+    for (var i = 0; i < locals.length; i++) {
+      if (window.vcomLocalPreviewOn(locals[i])) keep = locals[i];
+    }
+    var hidden = 0;
+    locals.forEach(function (video) {
+      if (video === keep) return;
+      if (window.vcomHideLiftedVideo) window.vcomHideLiftedVideo(video);
+      hidden += 1;
+    });
+    return { kept: keep ? 1 : 0, hidden: hidden };
+  };
+  window.vcomPlanRequest = function (data) {
+    data = data || {};
+    return data.planRequest === "plus" || data.planRequest === "extra" ? data.planRequest : "";
   };
   window.vcomCallShouldRelay = function (iceState, relayed) {
     if (relayed) return false;
@@ -2342,12 +2414,9 @@
     var root = document.createElement("section");
     root.id = "vcom-account";
     root.hidden = true;
-    root.innerHTML = '<header><button type="button" data-back aria-label="חזרה">→</button><b>מצב חשבון</b></header>'
-      + '<div class="vcom-allowance"><strong data-minutes>0</strong><span data-cap>מתוך 3,000 דקות שיחה</span><div class="vcom-meter" aria-hidden="true"><i data-fill></i></div></div>'
-      + '<div class="vcom-usage"><div><b data-voice>0</b><span>דקות שיחה</span></div><div><b data-video>0</b><span>שיחות וידאו</span></div></div>'
+    root.innerHTML = '<header><button type="button" data-back aria-label="חזרה">→</button><b>חבילות</b></header>'
       + '<p class="vcom-current" data-current></p>'
-      + '<button type="button" data-upgrade>שדרוג מסלול</button>'
-      + '<div data-plans hidden></div>'
+      + '<div data-plans></div>'
       + '<p data-status></p>';
     document.body.appendChild(root);
     var plans = root.querySelector("[data-plans]");
@@ -2356,14 +2425,16 @@
     function paint(data) {
       held = data || {};
       var view = window.vcomUsageView(held);
-      root.querySelector("[data-minutes]").textContent = view.minutes.toLocaleString("he-IL");
-      root.querySelector("[data-voice]").textContent = view.minutes.toLocaleString("he-IL");
-      root.querySelector("[data-video]").textContent = view.video.toLocaleString("he-IL");
-      root.querySelector("[data-cap]").textContent = "מתוך " + view.cap.toLocaleString("he-IL") + " דקות שיחה";
-      root.querySelector("[data-fill]").style.width = Math.round(view.ratio * 100) + "%";
-      root.querySelector("[data-current]").textContent = view.plan ? ("המסלול שלך: " + view.plan) : "";
+      var request = window.vcomPlanRequest(held);
+      root.querySelector("[data-current]").textContent = view.plan ? ("המסלול הפעיל: " + view.plan) : "עדיין אין מסלול מאושר";
       plans.querySelectorAll("[data-plan]").forEach(function (card) {
-        card.classList.toggle("on", card.getAttribute("data-plan") === view.planId);
+        var id = card.getAttribute("data-plan");
+        var small = card.querySelector("small");
+        card.classList.toggle("on", id === view.planId);
+        card.classList.toggle("wait", !!request && id === request && id !== view.planId);
+        if (id === view.planId) small.textContent = "המסלול הפעיל";
+        else if (request === id) small.textContent = "ממתין לאישור";
+        else small.textContent = "הבחירה נשלחת לאישור";
       });
     }
     function choose(id) {
@@ -2374,8 +2445,8 @@
         return;
       }
       status.textContent = "";
-      var next = { voiceSeconds: held.voiceSeconds || 0, videoCalls: held.videoCalls || 0, plan: id };
-      fs.updateDoc(fs.doc(fs.getFirestore(), "users", uid), { plan: id }).then(function () {
+      var next = { voiceSeconds: held.voiceSeconds || 0, videoCalls: held.videoCalls || 0, plan: held.plan || "", planRequest: id };
+      fs.updateDoc(fs.doc(fs.getFirestore(), "users", uid), { planRequest: id }).then(function () {
         paint(next);
       }).catch(function () {
         status.textContent = "שמירת המסלול נכשלה";
@@ -2395,10 +2466,8 @@
       plans.appendChild(card);
     });
     root.querySelector("[data-back]").addEventListener("click", function () { root.hidden = true; });
-    root.querySelector("[data-upgrade]").addEventListener("click", function () { plans.hidden = false; });
     window.vcomOpenAccount = function () {
       if (window.vcomCloseSideMenu) window.vcomCloseSideMenu();
-      plans.hidden = true;
       status.textContent = "";
       root.hidden = false;
       paint(held);
@@ -2408,7 +2477,7 @@
       fs.getDoc(fs.doc(fs.getFirestore(), "users", uid)).then(function (snap) {
         paint((snap && snap.data && snap.data()) || {});
       }).catch(function () {
-        status.textContent = "לא הצלחנו לטעון את מצב החשבון";
+        status.textContent = "לא הצלחנו לטעון את החבילות";
       });
     };
   }
@@ -2420,7 +2489,7 @@
     var menu = document.createElement("div");
     menu.id = "vcom-link-menu";
     menu.hidden = true;
-    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><button id="vcom-chatcom" type="button"><span class="vcom-link-open-text">Chatcom</span></button><button id="vcom-account-open" type="button"><span class="vcom-link-open-text">מצב חשבון</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><button id="vcom-chatcom" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M5 6.5h14v8.5H9.2L5 18.2V6.5z"/></svg></span><span class="vcom-link-open-text">Chatcom</span></button><button id="vcom-account-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><rect x="4" y="7" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4H19a1 1 0 0 1 1 1v9.5a1.5 1.5 0 0 1-1.5 1.5H16"/></svg></span><span class="vcom-link-open-text">חבילות</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
     document.body.appendChild(menu);
     var logo = document.createElement("img");
     logo.id = "vcom-menu-logo";
@@ -2866,6 +2935,58 @@
       });
     } catch (eTab) {}
     wireChatMedia();
+    function ensureHeaderLogo() {
+      if (document.getElementById("vcom-header-logo")) return;
+      var mark = document.createElement("div");
+      mark.id = "vcom-header-logo";
+      mark.setAttribute("aria-label", "VCOM");
+      mark.dir = "ltr";
+      mark.innerHTML = '<span class="v">V</span><span class="com">COM</span>';
+      document.body.appendChild(mark);
+    }
+    window.vcomSyncHeaderLogo = function () {
+      ensureHeaderLogo();
+      var mark = document.getElementById("vcom-header-logo");
+      if (!mark) return;
+      var account = document.getElementById("vcom-account");
+      var guest = !!document.getElementById("vcom-guest");
+      try {
+        if (document.documentElement.classList && document.documentElement.classList.contains) {
+          guest = guest || document.documentElement.classList.contains("vcom-guest-page");
+        }
+      } catch (eGuest) {}
+      mark.hidden = !window.vcomHeaderLogoVisible({
+        guest: guest,
+        ringing: !!window.__vcomRinging,
+        onCall: isOnCall(),
+        account: !!(account && !account.hidden)
+      });
+    };
+    window.vcomSyncHeaderLogo();
+    document.addEventListener("pointerup", function (event) {
+      if (event.button != null && event.button !== 0) return;
+      var host = document.querySelector("flt-semantics-host");
+      if (!host || !host.querySelectorAll) return;
+      var nodes = host.querySelectorAll("[aria-label='הודעה']");
+      var boxes = [];
+      for (var i = 0; i < nodes.length; i++) {
+        var rect = nodes[i].getBoundingClientRect ? nodes[i].getBoundingClientRect() : null;
+        if (!rect || rect.width < 8 || rect.height < 8) continue;
+        boxes.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, node: nodes[i] });
+      }
+      var hit = window.vcomMessageTapTarget(boxes, event.clientX, event.clientY);
+      if (!hit || !hit.node) return;
+      var target = event.target;
+      if (target && hit.node.contains && hit.node.contains(target)) return;
+      if (target && target.closest && target.closest("flt-semantics-host")) return;
+      var media = document.getElementById("vcom-chat-media");
+      if (media && !media.hidden) {
+        media.hidden = true;
+        if (media.classList) media.classList.add("vcom-composer-away");
+        if (!window.__vcomGroupId) window.__vcomOpenChat = "";
+      }
+      try { hit.node.click(); } catch (eClick) {}
+    }, true);
     function tick() {
       var now = Date.now();
       Object.keys(window.__vcomGuestBook).forEach(function (phone) {
@@ -3828,12 +3949,18 @@
       if (document.hidden) return;
       var grouped = !!window.__vcomGroupId;
       var composer = grouped ? null : window.vcomComposerOnScreen(composerLabels());
-      var open = window.vcomChatOverlayOpen(chatOpen(), grouped, composer, window.__vcomComposerAt || 0, Date.now());
+      var now = Date.now();
+      if (composer === true) window.__vcomComposerAt = now;
+      var open = window.vcomChatOverlayOpen(chatOpen(), grouped, composer, window.__vcomComposerAt || 0, now);
+      var buttons = window.vcomChatButtonsOpen(open, grouped ? true : composer, window.__vcomComposerAt || 0, now);
+      root.classList.toggle("vcom-composer-away", !buttons);
       root.classList.toggle("group", grouped);
       if (groupHead) groupHead.hidden = !grouped;
       if (groupCompose) groupCompose.hidden = !grouped;
       if (grouped && groupName) groupName.textContent = window.__vcomGroupName || "Chatcom";
       root.hidden = !open;
+      if (!open && !grouped && composer === false) window.__vcomOpenChat = "";
+      if (window.vcomSyncHeaderLogo) window.vcomSyncHeaderLogo();
       if (!open) {
         sheet.hidden = true;
         if (hold) endHold();
@@ -3855,11 +3982,15 @@
       + "#vcom-link-menu[hidden],#vcom-link-form[hidden],#vcom-link-banner[hidden],#vcom-dial-paste[hidden],#vcom-menu-logo[hidden]{display:none!important}"
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
-      + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + "#vcom-chatcom,#vcom-account-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#1C1C1E}"
-      + ".vcom-link-open-icon svg{display:block}"
-      + ".vcom-link-open-text{font-weight:600}"
+      + "#vcom-header-logo{position:fixed;z-index:45;top:calc(env(safe-area-inset-top,0px) + 14px);left:14px;display:flex;direction:ltr;align-items:baseline;pointer-events:none;font:700 18px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-header-logo .v{color:#34C759}#vcom-header-logo .com{color:#007AFF}"
+      + "#vcom-header-logo[hidden]{display:none!important}"
+      + "#vcom-link-open,#vcom-chatcom,#vcom-account-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:12px;width:100%;min-height:48px;box-sizing:border-box;margin:0;padding:0 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right}"
+      + "#vcom-link-open{font:600 17px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E}"
+      + "#vcom-chatcom,#vcom-account-open{font:600 17px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + ".vcom-link-open-icon{width:24px;height:24px;flex:0 0 24px;display:grid;place-items:center;color:#1C1C1E}"
+      + ".vcom-link-open-icon svg{display:block;width:24px;height:24px}"
+      + ".vcom-link-open-text{font-weight:600;font-size:17px;line-height:1.2}"
       + "#vcom-link-form{display:flex;flex-direction:column;gap:8px;margin:0}"
       + "#vcom-link-name{width:100%;box-sizing:border-box;border:1px solid #E5E5EA;border-radius:12px;background:#fff;color:#1C1C1E;padding:12px 14px;font:16px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-error{min-height:18px;margin:0;color:#C62828;font-size:13px;text-align:right}"
@@ -3873,6 +4004,7 @@
       + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;z-index:10021;background:#111;transform:scaleX(-1);pointer-events:none}"
       + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}"
       + "#vcom-chat-media[hidden]{display:none!important}"
+      + "#vcom-chat-media.vcom-composer-away #vcom-chat-plus,#vcom-chat-media.vcom-composer-away #vcom-chat-mic,#vcom-chat-media.vcom-composer-away #vcom-chat-sheet,#vcom-chat-media.vcom-composer-away #vcom-chat-rec{display:none!important}"
       + "#vcom-chat-thread{position:fixed;z-index:36;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 72px);bottom:calc(env(safe-area-inset-bottom,0px) + 78px);overflow:auto;background:#F2F2F7;padding:12px 10px 8px;box-sizing:border-box}"
       + ".vcom-bubble{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;margin:0 0 8px auto;background:#fff;color:#1C1C1E;border-radius:16px 16px 4px 16px;padding:6px;position:relative;content-visibility:auto;contain-intrinsic-size:72px}"
       + ".vcom-bubble.mine{margin:0 auto 8px 0;background:#007AFF;color:#fff;border-radius:16px 16px 16px 4px}"
@@ -3919,24 +4051,14 @@
       + "#vcom-account header{display:flex;align-items:center;gap:8px;min-height:48px}"
       + "#vcom-account header button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
       + "#vcom-account header b{font-size:20px;font-weight:700}"
-      + ".vcom-allowance{margin:12px 0 16px;background:#fff;border-radius:22px;padding:22px 18px 18px;box-shadow:0 10px 28px rgba(28,39,61,.06)}"
-      + ".vcom-allowance strong{display:block;font-size:42px;font-weight:700;letter-spacing:-.5px}"
-      + ".vcom-allowance span{color:#8E8E93;font-size:15px}"
-      + ".vcom-meter{height:10px;margin-top:16px;border-radius:999px;background:#E5E5EA;overflow:hidden}"
-      + ".vcom-meter i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#64D2FF,#007AFF)}"
-      + ".vcom-usage{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}"
-      + ".vcom-usage div{background:#fff;border-radius:18px;padding:16px;box-shadow:0 8px 20px rgba(28,39,61,.05)}"
-      + ".vcom-usage b{display:block;font-size:26px;font-weight:700}"
-      + ".vcom-usage span{color:#8E8E93;font-size:13px}"
-      + ".vcom-current{min-height:22px;margin:0 0 12px;color:#3A3A3C;font-size:15px;font-weight:600}"
-      + "#vcom-account [data-upgrade]{min-height:52px;border:0;border-radius:16px;background:#007AFF;color:#fff;font:700 17px/1 inherit;margin:0 0 14px}"
-      + ".vcom-plan{display:flex;align-items:center;gap:14px;width:100%;text-align:right;background:#fff;border:2px solid transparent;border-radius:22px;padding:16px;margin:0 0 12px;box-shadow:0 10px 24px rgba(28,39,61,.06)}"
+      + ".vcom-current{min-height:22px;margin:18px 0 14px;color:#3A3A3C;font-size:15px;font-weight:600}"
+      + ".vcom-plan{display:flex;align-items:center;gap:12px;width:100%;text-align:right;background:#fff;border:2px solid transparent;border-radius:18px;padding:14px;margin:0 0 10px;box-shadow:0 8px 18px rgba(28,39,61,.05)}"
       + ".vcom-plan.on{border-color:#007AFF}"
-      + ".vcom-plan img{width:64px;height:64px;object-fit:contain;flex:0 0 64px}"
-      + ".vcom-plan strong{display:block;font-size:20px;letter-spacing:.2px}"
+      + ".vcom-plan.wait{border-color:#FFCC00}"
+      + ".vcom-plan img{width:44px;height:44px;object-fit:contain;flex:0 0 44px}"
+      + ".vcom-plan strong{display:block;font-size:17px;letter-spacing:.2px}"
       + ".vcom-plan small{display:block;margin-top:4px;color:#8E8E93;font-size:13px;font-weight:500}"
-      + "#vcom-account [data-status]{min-height:20px;margin:0;color:#C62828;font-size:14px}"
-      + "#vcom-account [data-plans][hidden]{display:none!important}";
+      + "#vcom-account [data-status]{min-height:20px;margin:0;color:#C62828;font-size:14px}";
   }
   function guestCss() {
     return ""

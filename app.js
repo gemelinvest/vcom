@@ -316,17 +316,33 @@
 
   function ringTone(on) {
     if (!on) {
-      if (ringTone.ctx) try { ringTone.osc.stop(); ringTone.ctx.close(); } catch (e) {}
+      if (ringTone.timer) clearInterval(ringTone.timer);
+      ringTone.timer = null;
+      if (ringTone.ctx) try { ringTone.ctx.close(); } catch (e) {}
       ringTone.ctx = null;
       return;
     }
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
-    var osc = ctx.createOscillator();
-    var gain = ctx.createGain();
-    osc.frequency.value = 480;
-    gain.gain.value = 0.04;
-    osc.connect(gain); gain.connect(ctx.destination); osc.start();
-    ringTone.ctx = ctx; ringTone.osc = osc;
+    var notes = [659.25, 987.77, 830.61, 1174.66];
+    var play = function () {
+      if (!ringTone.ctx) return;
+      var t0 = ctx.currentTime + 0.02;
+      notes.forEach(function (freq, i) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        var start = t0 + i * 0.28;
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.2, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.24);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(start); osc.stop(start + 0.26);
+      });
+    };
+    play();
+    ringTone.ctx = ctx;
+    ringTone.timer = setInterval(play, 2600);
   }
 
   function stopTracks(stream) {
