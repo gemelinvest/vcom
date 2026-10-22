@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid16";
+  window.__VCOM_LINK_BUILD = "vid17";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1237,8 +1237,71 @@
     if (!row || !row.code) return false;
     var exp = asMillis(row.expiresAt);
     if (exp && exp <= now && row.status !== "active") return false;
+    if (row.status === "active" && row.seenAt && exp && exp <= now && now - row.seenAt > 180000 && window.__vcomGuestActive !== row.code) return false;
     return true;
   };
+  window.vcomSessionNeedsWake = function (idleMs, sinceWakeMs) {
+    return (idleMs || 0) >= 15000 || (sinceWakeMs || 0) >= 1200000;
+  };
+  var sessionWakeAt = 0;
+  var sessionHiddenAt = 0;
+  var sessionWaking = false;
+  function sessionOnCall() {
+    try {
+      var bloc = window.__vcomBloc;
+      if (bloc && bloc.c && bloc.c.gnY && bloc.c.gnY()) return true;
+    } catch (e) {}
+    return !!(window.__vcomRinging || window.__vcomGuestActive);
+  }
+  window.vcomWakeSession = function () {
+    var now = Date.now();
+    var idle = sessionHiddenAt && document.visibilityState !== "hidden" ? now - sessionHiddenAt : 0;
+    if (document.visibilityState !== "hidden") sessionHiddenAt = 0;
+    if (!sessionWakeAt) sessionWakeAt = now;
+    if (sessionWaking || !window.vcomSessionNeedsWake(idle, now - sessionWakeAt)) return;
+    sessionWaking = true;
+    sessionWakeAt = now;
+    var jobs = [];
+    try {
+      var auth = window.firebase_auth;
+      var user = auth && auth.getAuth ? auth.getAuth().currentUser : null;
+      if (user && user.getIdToken) jobs.push(Promise.resolve(user.getIdToken(true)).catch(function () {}));
+    } catch (eAuth) {}
+    function kick(fs, db) {
+      if (!fs || !db) return;
+      var step = Promise.resolve();
+      if (!sessionOnCall() && fs.disableNetwork) step = Promise.resolve().then(function () { return fs.disableNetwork(db); }).catch(function () {});
+      jobs.push(step.then(function () {
+        if (fs.enableNetwork) return fs.enableNetwork(db);
+      }).catch(function () {}));
+    }
+    try {
+      var fs = window.firebase_firestore;
+      if (fs && fs.getFirestore) kick(fs, fs.getFirestore());
+    } catch (eFs) {}
+    if (window.__vcomGuestFs && window.__vcomGuestDb) kick(window.__vcomGuestFs, window.__vcomGuestDb);
+    Promise.all(jobs).catch(function () {}).then(function () {
+      sessionWaking = false;
+      if (!sessionOnCall() && window.vcomRebindGuestBook) window.vcomRebindGuestBook();
+      try {
+        var bloc = window.__vcomBloc;
+        if (bloc && bloc.fy && !sessionOnCall() && now - (bloc.__vcomDialAt || 0) > 12000) {
+          bloc.fy = false;
+          bloc.__vcomDialAt = 0;
+        }
+      } catch (eBloc) {}
+    });
+  };
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") sessionHiddenAt = Date.now();
+    else window.vcomWakeSession();
+  });
+  window.addEventListener("online", function () { window.vcomWakeSession(); });
+  window.addEventListener("pageshow", function () { window.vcomWakeSession(); });
+  setInterval(function () {
+    if (document.visibilityState === "hidden") return;
+    window.vcomWakeSession();
+  }, 60000);
 
   window.vcomIgnoreStaleEnded = function (data, offerSent) {
     if (offerSent) return false;
@@ -2041,9 +2104,13 @@
           db = fs.getFirestore(app);
         }
         var ref = fs.doc(db, "guestLinks", code);
+        window.__vcomGuestFs = fs;
+        window.__vcomGuestDb = db;
         window.__vcomGuestEndVisit = function () { endVisit(fs, ref); };
         var markedReady = false;
-        fs.onSnapshot(ref, function (snap) {
+        function listenGuest() {
+        var guestUnsub = fs.onSnapshot(ref, function (snap) {
+          window.__vcomGuestListenFails = 0;
           var data = snap.exists() ? snap.data() || {} : null;
           window.__vcomGuestData = data;
           if (window.vcomGuestResumeFromEnded(data, endingVisit)) {
@@ -2072,8 +2139,13 @@
             nodes.timer.hidden = false;
           }
         }, function () {
-          showDead();
+          try { guestUnsub(); } catch (eUn) {}
+          window.__vcomGuestListenFails = (window.__vcomGuestListenFails || 0) + 1;
+          var delay = Math.min(30000, 2000 * Math.pow(2, window.__vcomGuestListenFails));
+          setTimeout(listenGuest, delay);
         });
+        }
+        listenGuest();
         nodes.answer.addEventListener("click", function () {
           var data = window.__vcomGuestData;
           if (!data || !data.offer || session) return;
@@ -2540,6 +2612,7 @@
           row.status = data.status || row.status;
           row.expiresAt = asMillis(data.expiresAt) || row.expiresAt;
           row.fromLink = true;
+          row.seenAt = Date.now();
         }
         render();
       }, function () {
@@ -2704,7 +2777,8 @@
             status: "waiting",
             url: shareUrl(code),
             local: true,
-            fromLink: true
+            fromLink: true,
+            seenAt: Date.now()
           };
           watch(code);
           render();
@@ -2809,22 +2883,12 @@
     setInterval(tick, 2000);
     var userUnsub = null;
     var authBound = false;
-    function bindUser() {
+    function attachUser(user) {
       var fs = fsNow();
-      var auth = window.firebase_auth;
-      if (!fs || !auth || !auth.getAuth || !auth.onAuthStateChanged || !fs.onSnapshot) return false;
-      if (authBound) return true;
-      authBound = true;
-      auth.onAuthStateChanged(auth.getAuth(), function (user) {
-        window.__vcomUid = user ? user.uid : "";
-        if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
-        if (!user) {
-          window.__vcomGuestBook = {};
-          window.__vcomProfile = {};
-          render();
-          return;
-        }
-        userUnsub = fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
+      if (!fs || !user || !fs.onSnapshot) return;
+      if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
+      userUnsub = fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
+        window.__vcomUserWatchFails = 0;
           var data = snap.exists() ? snap.data() || {} : {};
           window.__vcomProfile = {
             name: data.name || data.displayName || "",
@@ -2844,7 +2908,9 @@
               expiresAt: prev && prev.fromLink ? prev.expiresAt : (asMillis(row.expiresAt) || (prev && prev.expiresAt) || 0),
               status: prev && prev.fromLink ? prev.status : (row.status || "waiting"),
               url: shareUrl(code),
-              fromLink: !!(prev && prev.fromLink)
+              fromLink: !!(prev && prev.fromLink),
+              local: !!(prev && prev.local),
+              seenAt: Date.now()
             };
             if (!window.vcomLinkStillVisible(merged)) return;
             livePhones[phone] = 1;
@@ -2862,7 +2928,46 @@
           });
           render();
           if (busy && newestExpiry() > (window.__vcomIssueSeen || 0)) finishIssue(window.__vcomIssueGen);
-        }, function () {});
+        }, function () {
+          try { if (typeof userUnsub === "function") userUnsub(); } catch (eUn) {}
+          userUnsub = null;
+          window.__vcomUserWatchFails = (window.__vcomUserWatchFails || 0) + 1;
+          var delay = Math.min(30000, 2000 * Math.pow(2, window.__vcomUserWatchFails));
+          setTimeout(function () { attachUser(user); }, delay);
+        });
+    }
+    window.vcomRebindGuestBook = function () {
+      Object.keys(watched).forEach(function (code) {
+        try { if (typeof watched[code] === "function") watched[code](); } catch (e) {}
+        delete watched[code];
+      });
+      var user = null;
+      try {
+        var auth = window.firebase_auth;
+        user = auth && auth.getAuth ? auth.getAuth().currentUser : null;
+      } catch (eUser) {}
+      if (user) attachUser(user);
+      Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+        var row = window.__vcomGuestBook[phone];
+        if (row && row.code) watch(row.code);
+      });
+    };
+    function bindUser() {
+      var fs = fsNow();
+      var auth = window.firebase_auth;
+      if (!fs || !auth || !auth.getAuth || !auth.onAuthStateChanged || !fs.onSnapshot) return false;
+      if (authBound) return true;
+      authBound = true;
+      auth.onAuthStateChanged(auth.getAuth(), function (user) {
+        window.__vcomUid = user ? user.uid : "";
+        if (!user) {
+          if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
+          window.__vcomGuestBook = {};
+          window.__vcomProfile = {};
+          render();
+          return;
+        }
+        attachUser(user);
       });
       return true;
     }

@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid16"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid17"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -880,4 +880,27 @@ test("incoming ring vibrates and covers the circle with the glass whistle", func
   assert.equal(w.__vcomVibrating, false);
   assert.equal(img.hidden, true);
   assert.equal(pulses[pulses.length - 1], 0);
+});
+
+test("a long-open browser wakes the session before trusting a stale code", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /window\.vcomWakeSession = function/);
+  assert.match(src, /getIdToken\(true\)/);
+  assert.match(src, /enableNetwork/);
+  assert.match(src, /window\.vcomRebindGuestBook = function/);
+  assert.match(src, /setTimeout\(listenGuest, delay\)/);
+  const w = loadLink();
+  assert.equal(w.vcomSessionNeedsWake(0, 0), false);
+  assert.equal(w.vcomSessionNeedsWake(14999, 0), false);
+  assert.equal(w.vcomSessionNeedsWake(15000, 0), true);
+  assert.equal(w.vcomSessionNeedsWake(0, 1200000), true);
+  const now = Date.now();
+  const fresh = { code: "Ab3dEf", status: "active", expiresAt: now - 1000, seenAt: now - 1000 };
+  assert.equal(w.vcomGuestStillDialable(fresh, now), true);
+  const stale = { code: "Ab3dEf", status: "active", expiresAt: now - 1000, seenAt: now - 181000 };
+  w.__vcomGuestBook = { "020578412": stale };
+  assert.equal(w.vcomGuestStillDialable(stale, now), false);
+  assert.equal(w.vcomGuestCode("020578412"), "");
+  w.__vcomGuestActive = "Ab3dEf";
+  assert.equal(w.vcomGuestStillDialable(stale, now), true);
 });
