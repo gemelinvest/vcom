@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid18";
+  window.__VCOM_LINK_BUILD = "vid19";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1434,8 +1434,19 @@
   };
   window.vcomHeaderLogoVisible = function (state) {
     state = state || {};
+    if (!state.menu) return false;
     if (state.guest || state.ringing || state.onCall || state.account) return false;
     return true;
+  };
+  window.vcomMenuWordmarkBox = function (viewWidth, drawerWidth, open, rtl) {
+    var width = Math.min(drawerWidth >= 200 ? drawerWidth : 304, 304, Number(viewWidth) || 0);
+    var x = Number(open);
+    if (!isFinite(x) || x < 0) x = 0;
+    if (x > 1) x = 1;
+    var inset = 18;
+    var shift = (1 - x) * width;
+    var left = rtl ? ((Number(viewWidth) || 0) - width + inset + shift) : (inset - shift);
+    return { left: Math.round(left), top: 16 };
   };
   window.vcomLocalPreviewOn = function (video) {
     var stream = video && video.srcObject;
@@ -2902,6 +2913,7 @@
         var shift = (1 - x) * spot.width;
         menu.style.transform = "translate3d(" + (spot.rtl ? shift : -shift) + "px,0,0)";
       } else menu.style.transform = "";
+      if (window.vcomSyncHeaderLogo) window.vcomSyncHeaderLogo();
     }
     window.__vcomDrawerMove = applyDrawer;
     applyDrawer(window.__vcomDrawerX || 0);
@@ -2941,6 +2953,7 @@
       mark.id = "vcom-header-logo";
       mark.setAttribute("aria-label", "VCOM");
       mark.dir = "ltr";
+      mark.hidden = true;
       mark.innerHTML = '<span class="v">V</span><span class="com">COM</span>';
       document.body.appendChild(mark);
     }
@@ -2955,12 +2968,24 @@
           guest = guest || document.documentElement.classList.contains("vcom-guest-page");
         }
       } catch (eGuest) {}
+      var menuOpen = !!(menu && !menu.hidden);
       mark.hidden = !window.vcomHeaderLogoVisible({
         guest: guest,
         ringing: !!window.__vcomRinging,
         onCall: isOnCall(),
-        account: !!(account && !account.hidden)
+        account: !!(account && !account.hidden),
+        menu: menuOpen
       });
+      if (mark.hidden || !menu) return;
+      var rect = menu.getBoundingClientRect ? menu.getBoundingClientRect() : null;
+      var left = rect && isFinite(rect.left) && rect.width >= 8 ? rect.left + 18 : 18;
+      if (!rect || !isFinite(rect.left) || rect.width < 8) {
+        var rtl = String(document.documentElement.getAttribute("dir") || "").toLowerCase() === "rtl";
+        left = window.vcomMenuWordmarkBox(window.innerWidth, window.__vcomDrawerWidth, window.__vcomDrawerX || 0, rtl).left;
+      }
+      mark.style.top = "calc(env(safe-area-inset-top, 0px) + 16px)";
+      mark.style.left = left + "px";
+      mark.style.right = "auto";
     };
     window.vcomSyncHeaderLogo();
     document.addEventListener("pointerup", function (event) {
@@ -3982,7 +4007,7 @@
       + "#vcom-link-menu[hidden],#vcom-link-form[hidden],#vcom-link-banner[hidden],#vcom-dial-paste[hidden],#vcom-menu-logo[hidden]{display:none!important}"
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
-      + "#vcom-header-logo{position:fixed;z-index:45;top:calc(env(safe-area-inset-top,0px) + 14px);left:14px;display:flex;direction:ltr;align-items:baseline;pointer-events:none;font:700 18px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-header-logo{position:fixed;z-index:86;top:calc(env(safe-area-inset-top,0px) + 16px);display:flex;direction:ltr;align-items:baseline;pointer-events:none;font:700 22px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + "#vcom-header-logo .v{color:#34C759}#vcom-header-logo .com{color:#007AFF}"
       + "#vcom-header-logo[hidden]{display:none!important}"
       + "#vcom-link-open,#vcom-chatcom,#vcom-account-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:12px;width:100%;min-height:48px;box-sizing:border-box;margin:0;padding:0 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right}"
