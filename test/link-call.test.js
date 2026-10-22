@@ -57,7 +57,7 @@ function loadLink() {
     URLSearchParams: URLSearchParams,
     Audio: function () { return { setAttribute: function () {}, preload: "", loop: false, play: function () { return Promise.resolve(); } }; },
     crypto: { getRandomValues: function (a) { for (var i = 0; i < a.length; i++) a[i] = 1; return a; } },
-    RTCPeerConnection: function () { this.addEventListener = function () {}; this.addTrack = function () {}; },
+    RTCPeerConnection: function (cfg) { this.cfg = cfg; this.addEventListener = function () {}; this.addTrack = function () {}; },
     Date: Date,
     Math: Math,
     Number: Number,
@@ -166,7 +166,20 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid19"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid20"'), true);
+  assert.equal(src.includes("openrelay"), false);
+  const wRelay = loadLink();
+  const turn = wRelay.vcomIceServers().filter(function (item) { return item.username === "vcom"; })[0];
+  assert.ok(turn, "private relay is configured");
+  assert.match(turn.urls.join(" "), /turn:34\.165\.7\.195:3478\?transport=udp/);
+  assert.match(turn.urls.join(" "), /turn:34\.165\.7\.195:3478\?transport=tcp/);
+  assert.match(turn.urls.join(" "), /turn:34\.165\.7\.195:443\?transport=tcp/);
+  assert.equal(turn.credential.length >= 16, true);
+  const direct = new wRelay.RTCPeerConnection({ iceServers: [] });
+  assert.deepEqual(direct.cfg.iceServers, []);
+  const replaced = new wRelay.RTCPeerConnection({ iceServers: [{ urls: "turn:openrelay.metered.ca:80" }], iceTransportPolicy: "all" });
+  assert.equal(replaced.cfg.iceTransportPolicy, "all");
+  assert.match(replaced.cfg.iceServers.filter(function (item) { return item.username === "vcom"; })[0].urls.join(" "), /34\.165\.7\.195:3478/);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
