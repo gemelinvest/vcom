@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid17"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid18"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -281,6 +281,14 @@ test("chat messages can carry a voice note, a photo, or a video", function () {
   assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now() - 5000, Date.now()), true);
   assert.equal(w.vcomChatOverlayOpen(true, false, null, Date.now(), Date.now()), true);
   assert.equal(w.vcomChatOverlayOpen(true, false, true, 0, Date.now()), true);
+  assert.equal(w.vcomChatOverlayOpen(true, false, false, 0, Date.now()), false);
+  assert.equal(w.vcomChatOverlayOpen(true, false, false, Date.now() - 1200, Date.now()), false);
+  assert.equal(w.vcomChatButtonsOpen(true, false, Date.now(), Date.now()), true);
+  assert.equal(w.vcomChatButtonsOpen(true, false, Date.now() - 500, Date.now()), false);
+  assert.equal(w.vcomChatButtonsOpen(false, true, Date.now(), Date.now()), false);
+  const tap = w.vcomMessageTapTarget([{ left: 10, right: 40, top: 100, bottom: 140, id: "msg" }], 20, 120);
+  assert.equal(tap.id, "msg");
+  assert.equal(w.vcomMessageTapTarget([{ left: 10, right: 40, top: 100, bottom: 140 }], 80, 120), null);
   assert.equal(w.vcomCallShouldRelay("failed", false), true);
   assert.equal(w.vcomCallShouldRelay("disconnected", false), true);
   assert.equal(w.vcomCallShouldRelay("failed", true), false);
@@ -762,9 +770,46 @@ test("camera tracks stay on the small preview so the remote picture does not swa
   const stream = { getVideoTracks: function () { return [{ kind: "video", id: "cam", readyState: "live" }]; } };
   assert.equal(w.vcomNoteLocalVideo(stream), true);
   const preview = { id: "video_RTCVideoRenderer-0", srcObject: stream, style: {} };
-  const remote = { id: "video_RTCVideoRenderer-1", srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "far", readyState: "live" }]; } }, style: {} };
+  const remote = { id: "video_RTCVideoRenderer-1", srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "far", readyState: "live" }]; } }, style: {}, hidden: false };
   assert.equal(w.vcomVideoIsLocal(preview), true);
   assert.equal(w.vcomVideoIsLocal(remote), false);
+  const older = {
+    id: "video_RTCVideoRenderer-0",
+    srcObject: stream,
+    hidden: false,
+    style: {},
+    attrs: { "data-vcom-local": "1" },
+    getAttribute: function (name) { return this.attrs[name] || null; },
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    removeAttribute: function (name) { delete this.attrs[name]; }
+  };
+  const newer = {
+    id: "video_RTCVideoRenderer-2",
+    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "cam2", readyState: "live", enabled: true }]; } },
+    hidden: false,
+    style: {},
+    attrs: { "data-vcom-local": "1" },
+    getAttribute: function (name) { return this.attrs[name] || null; },
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    removeAttribute: function (name) { delete this.attrs[name]; }
+  };
+  const off = {
+    id: "video_RTCVideoRenderer-3",
+    srcObject: { getVideoTracks: function () { return [{ kind: "video", id: "cam3", readyState: "live", enabled: false }]; } },
+    hidden: false,
+    style: {},
+    attrs: { "data-vcom-local": "1" },
+    getAttribute: function (name) { return this.attrs[name] || null; },
+    setAttribute: function (name, value) { this.attrs[name] = String(value); },
+    removeAttribute: function (name) { delete this.attrs[name]; }
+  };
+  const settled = w.vcomSettleLocalPreviews([older, off, newer, remote]);
+  assert.equal(settled.kept, 1);
+  assert.equal(settled.hidden, 2);
+  assert.equal(older.hidden, true);
+  assert.equal(off.hidden, true);
+  assert.equal(newer.hidden, false);
+  assert.equal(remote.hidden, false);
 });
 
 test("ended call videos are hidden so they do not cover the app", function () {
@@ -789,13 +834,20 @@ test("ended call videos are hidden so they do not cover the app", function () {
 test("account status reads one summary and a plan choice is one write", function () {
   const src = fs.readFileSync(LINK, "utf8");
   const admin = fs.readFileSync(path.join(ROOT, "admin", "index.html"), "utf8");
-  assert.match(src, />מצב חשבון</);
+  assert.match(src, />חבילות</);
+  assert.equal(src.includes(">מצב חשבון<"), false);
+  assert.equal(src.includes("vcom-meter"), false);
+  assert.match(src, /planRequest: id/);
   assert.match(src, /VCOM PLUS/);
   assert.match(src, /VCOM EXTRA PLUS/);
   assert.match(src, /\/icons\/vcom-handset\.png/);
-  assert.match(src, /שדרוג מסלול/);
   assert.equal(admin.includes("ממתינים לאישור"), false);
   assert.equal(admin.includes("בקשות לאישור"), false);
+  assert.equal(admin.includes(">אימייל<"), false);
+  assert.match(admin, /מסלולים/);
+  assert.match(admin, /אישור מסלול/);
+  assert.match(admin, /VCOM PLUS/);
+  assert.match(admin, /VCOM EXTRA PLUS/);
   assert.match(admin, /ניתוק מנוי/);
   assert.match(admin, /userId: "retired"/);
   const rules = fs.readFileSync(path.join(ROOT, "firestore.rules"), "utf8");
@@ -827,6 +879,28 @@ test("account status reads one summary and a plan choice is one write", function
   assert.equal(writes, 1);
   assert.equal(w.vcomRecordCallUse(42, true), false);
   assert.equal(writes, 1);
+  assert.equal(w.vcomPlanRequest({ planRequest: "plus" }), "plus");
+  assert.equal(w.vcomPlanRequest({ planRequest: "nope" }), "");
+  assert.equal(w.vcomHeaderLogoVisible({}), true);
+  assert.equal(w.vcomHeaderLogoVisible({ onCall: true }), false);
+  assert.equal(w.vcomHeaderLogoVisible({ guest: true }), false);
+  assert.equal(w.vcomIncomingNotes.join(","), "659.25,987.77,830.61,1174.66");
+  assert.equal(src.includes("523.25, 659.25, 783.99"), false);
+  assert.match(src, /if \(window\.AudioContext \|\| window\.webkitAudioContext\) startOsc\(\)/);
+});
+
+test("Android splash maskable icon is a plain field, not the handset tile", function () {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
+  const maskable = manifest.icons.filter(function (icon) { return icon.purpose === "maskable"; });
+  const any = manifest.icons.filter(function (icon) { return icon.purpose === "any"; });
+  assert.equal(maskable.length, 2);
+  assert.equal(any.length, 2);
+  maskable.forEach(function (icon) {
+    assert.match(icon.src, /vcom-splash-plain/);
+    assert.equal(icon.src.includes("vcom-launch"), false);
+  });
+  any.forEach(function (icon) { assert.match(icon.src, /vcom-launch/); });
+  assert.equal(manifest.background_color.toLowerCase(), "#7ec8f8");
 });
 
 test("incoming ring vibrates and covers the circle with the glass whistle", function () {
