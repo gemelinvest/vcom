@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid18"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid19"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -881,9 +881,14 @@ test("account status reads one summary and a plan choice is one write", function
   assert.equal(writes, 1);
   assert.equal(w.vcomPlanRequest({ planRequest: "plus" }), "plus");
   assert.equal(w.vcomPlanRequest({ planRequest: "nope" }), "");
-  assert.equal(w.vcomHeaderLogoVisible({}), true);
-  assert.equal(w.vcomHeaderLogoVisible({ onCall: true }), false);
-  assert.equal(w.vcomHeaderLogoVisible({ guest: true }), false);
+  assert.equal(w.vcomHeaderLogoVisible({}), false);
+  assert.equal(w.vcomHeaderLogoVisible({ menu: true }), true);
+  assert.equal(w.vcomHeaderLogoVisible({ menu: true, onCall: true }), false);
+  assert.equal(w.vcomHeaderLogoVisible({ menu: true, guest: true }), false);
+  assert.equal(w.vcomHeaderLogoVisible({ menu: true, account: true }), false);
+  assert.equal(w.vcomMenuWordmarkBox(390, 304, 1, true).left, 104);
+  assert.equal(w.vcomMenuWordmarkBox(390, 304, 0.5, true).left, 256);
+  assert.equal(w.vcomMenuWordmarkBox(390, 304, 1, false).left, 18);
   assert.equal(w.vcomIncomingNotes.join(","), "659.25,987.77,830.61,1174.66");
   assert.equal(src.includes("523.25, 659.25, 783.99"), false);
   assert.match(src, /if \(window\.AudioContext \|\| window\.webkitAudioContext\) startOsc\(\)/);
