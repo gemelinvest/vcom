@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid19";
+  window.__VCOM_LINK_BUILD = "vid20";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -9,27 +9,45 @@
     return m ? m[1] : "";
   }
   var guestCode = readGuest();
-  var ICE = {
-    iceServers: [
+  window.vcomIceServers = function () {
+    return [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
       { urls: "stun:stun.cloudflare.com:3478" },
       {
         urls: [
-          "turn:openrelay.metered.ca:80?transport=udp",
-          "turn:openrelay.metered.ca:80?transport=tcp",
-          "turn:openrelay.metered.ca:443?transport=tcp",
-          "turns:openrelay.metered.ca:443?transport=tcp",
-          "turn:global.relay.metered.ca:80?transport=udp",
-          "turn:global.relay.metered.ca:80?transport=tcp",
-          "turn:global.relay.metered.ca:443?transport=tcp",
-          "turns:global.relay.metered.ca:443?transport=tcp"
+          "turn:34.165.7.195:3478?transport=udp",
+          "turn:34.165.7.195:3478?transport=tcp",
+          "turn:34.165.7.195:443?transport=tcp"
         ],
-        username: "openrelayproject",
-        credential: "openrelayproject"
+        username: "vcom",
+        credential: "tABqXE3tY5imLbWIzMvIhesiyJUO5gtM"
       }
-    ]
+    ];
   };
+  var ICE = { iceServers: window.vcomIceServers() };
+  (function wrapCallRelay() {
+    var NativePC = typeof RTCPeerConnection === "function" ? RTCPeerConnection : null;
+    if (!NativePC || NativePC.__vcomWrapped) return;
+    function VcomPeerConnection(config) {
+      var next = config;
+      try {
+        var servers = config && config.iceServers;
+        if (servers && servers.length) {
+          next = {};
+          for (var key in config) {
+            if (Object.prototype.hasOwnProperty.call(config, key)) next[key] = config[key];
+          }
+          next.iceServers = window.vcomIceServers();
+        }
+      } catch (eWrap) {}
+      return new NativePC(next);
+    }
+    VcomPeerConnection.prototype = NativePC.prototype;
+    VcomPeerConnection.__vcomWrapped = true;
+    try { Object.setPrototypeOf(VcomPeerConnection, NativePC); } catch (eProto) {}
+    window.RTCPeerConnection = VcomPeerConnection;
+  })();
   var firebaseConfig = {
     apiKey: "AIzaSyCN7q0RH1uew-Sb4xyl8YNSEPZM-jqaQJI",
     authDomain: "voip-call-app-7d0c3.firebaseapp.com",
