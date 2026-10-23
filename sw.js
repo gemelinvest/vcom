@@ -1,4 +1,4 @@
-const CACHE = "vcom-v8";
+const CACHE = "vcom-v9";
 const ASSETS = [
   "./",
   "./index.html",
