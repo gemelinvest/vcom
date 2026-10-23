@@ -20,8 +20,8 @@
     "path": "./android.keystore",
     "alias": "vcom"
   },
-  "appVersionCode": 1,
-  "appVersion": "1.0.0",
+  "appVersionCode": 2,
+  "appVersion": "1.0.1",
   "shortcuts": [],
   "generatorApp": "bubblewrap",
   "webManifestUrl": "https://voip-call-app-7d0c3.web.app/manifest.webmanifest",
@@ -30,7 +30,7 @@
   "alphaDependencies": {
     "enabled": false
   },
-  "enableSiteSettingsShortcut": false,
+  "enableSiteSettingsShortcut": true,
   "isChromeOSOnly": false,
   "isMetaQuest": false,
   "fullScopeUrl": "https://voip-call-app-7d0c3.web.app/",
