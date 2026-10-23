@@ -1,0 +1,43 @@
+{
+  "packageId": "app.vcom.android",
+  "host": "voip-call-app-7d0c3.web.app",
+  "name": "VCOM",
+  "launcherName": "VCOM",
+  "display": "standalone",
+  "themeColor": "#F4F6FB",
+  "themeColorDark": "#F4F6FB",
+  "navigationColor": "#F4F6FB",
+  "navigationColorDark": "#F4F6FB",
+  "navigationDividerColor": "#F4F6FB",
+  "navigationDividerColorDark": "#F4F6FB",
+  "backgroundColor": "#F4F6FB",
+  "enableNotifications": false,
+  "startUrl": "/",
+  "iconUrl": "https://voip-call-app-7d0c3.web.app/icons/icon-512.png",
+  "maskableIconUrl": "https://voip-call-app-7d0c3.web.app/icons/icon-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "vcom"
+  },
+  "appVersionCode": 2,
+  "appVersion": "1.0.1",
+  "shortcuts": [],
+  "generatorApp": "bubblewrap",
+  "webManifestUrl": "https://voip-call-app-7d0c3.web.app/manifest.webmanifest",
+  "fallbackType": "webview",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://voip-call-app-7d0c3.web.app/",
+  "minSdkVersion": 24,
+  "orientation": "default",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "displayOverride": []
+}

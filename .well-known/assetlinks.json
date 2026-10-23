@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vcom.android",
+      "sha256_cert_fingerprints": [
+        "84:59:9F:9F:0F:38:F4:8C:A8:E0:3B:4C:F4:6A:81:33:AE:52:C2:83:5A:02:2E:67:69:52:8A:08:79:F9:12:93"
+      ]
+    }
+  }
+]

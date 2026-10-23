@@ -1,0 +1,12 @@
+android/android.keystore
+android/signing.env
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app-release-unsigned.apk
+android/app-release-unsigned-aligned.apk
+android/app-release-signed.apk
+android/app-release-bundle.aab
+android/.idea/
+android/*.apk.idsig
