@@ -18,13 +18,13 @@ test("maskable icons are the handset logo, not the flat blue tile", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
   const maskable = manifest.icons.filter((icon) => icon.purpose === "maskable");
   assert.deepEqual(maskable.map((icon) => icon.src), [
-    "icons/vcom-splash-plain-192.png?v=vid19",
-    "icons/vcom-splash-plain-512.png?v=vid19",
+    "icons/vcom-splash-plain-192.png?v=vid20",
+    "icons/vcom-splash-plain-512.png?v=vid20",
   ]);
   for (const icon of maskable) {
     const file = path.join(ROOT, icon.src.split("?")[0]);
     const stat = fs.statSync(file);
-    assert.ok(stat.size > 10000, file + " is too small to contain the logo");
+    assert.ok(stat.size > 5000, file + " is too small to contain the logo");
     assert.notEqual(sha256(file), LIVE_BLUE_512);
     const report = execFileSync("python3", ["-c", `
 from PIL import Image

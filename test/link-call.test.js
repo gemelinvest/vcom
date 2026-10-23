@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid10"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid21"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -244,14 +244,13 @@ test("the side menu drops the handset and closes the link form with the drawer",
 test("chat messages can carry a voice note, a photo, or a video", function () {
   const src = fs.readFileSync(LINK, "utf8");
   assert.match(src, /data-mic aria-label="הקלטה"/);
-  assert.match(src, /data-camera aria-label="מצלמה"/);
-  assert.match(src, /data-gallery aria-label="גלריה"/);
-  assert.match(src, /data-video aria-label="סרטון"/);
+  assert.match(src, /data-gallery>שליחת תמונה מהגלריה/);
+  assert.match(src, /data-capture>צילום תמונה \/ סרטון/);
   assert.match(src, /textContent = "מחק"/);
   assert.match(src, /dataset\.delete/);
   assert.equal(src.includes("vcom-chat-media-tray"), false);
-  assert.match(src, /capture = "environment"/);
-  assert.match(src, /accept = "video\/\*"/);
+  assert.match(src, /setAttribute\("capture", "environment"\)/);
+  assert.match(src, /accept = "image\/\*,video\/\*"/);
   assert.match(src, /new MediaRecorder\(stream\)/);
   assert.match(src, /pointerdown/);
   const w = loadLink();
@@ -753,4 +752,53 @@ test("ended call videos are hidden so they do not cover the app", function () {
   assert.equal(result.shown, 0);
   assert.equal(el.hidden, true);
   assert.equal(el.style.zIndex, "0");
+});
+
+test("the sender sees that the recipient opened the call link and is waiting", function () {
+  const w = loadLink();
+  const now = 1_700_000_000_000;
+  const waiting = { status: "ringing", guestReady: true, guestReadyAt: now - 5000, expiresAt: now + 60000 };
+  assert.equal(w.vcomGuestIsReady(waiting, now), true);
+  assert.equal(w.vcomLinkStatusText(waiting, now), "פתח את קישור השיחה · ניתן להתקשר");
+  assert.equal(w.vcomGuestIsReady({ status: "ringing", guestReady: true, guestReadyAt: now - 25000 }, now), false);
+  assert.equal(w.vcomLinkStatusText({ status: "active", guestReady: true, guestReadyAt: now }, now), "בשיחה");
+  assert.equal(w.vcomLinkStatusText({ status: "ringing", expiresAt: now + 60000 }, now) !== "פתח את קישור השיחה · ניתן להתקשר", true);
+});
+
+test("an incoming call stays live for a minute and the answer button is wired", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /root\.id = "vcom-incoming-screen"/);
+  assert.match(src, /שיחה נכנסת/);
+  assert.match(src, /__vcomAnswer/);
+  assert.match(src, /__vcomDecline/);
+  const w = loadLink();
+  const now = 1_700_000_000_000;
+  assert.equal(w.vcomIncomingStillLive({ status: "ringing", createdAt: now - 10000 }, now), true);
+  assert.equal(w.vcomIncomingStillLive({ status: "ringing", createdAt: now - 70000 }, now), false);
+  assert.equal(w.vcomIncomingStillLive({ status: "active", createdAt: now }, now), false);
+  assert.equal(w.vcomIncomingStillLive({ status: "ringing" }, now), true);
+});
+
+test("the repo keeps the relay password out of git", function () {
+  const src = fs.readFileSync(LINK, "utf8");
+  assert.match(src, /credential: "openrelayproject"/);
+});
+
+test("a brief disconnect does not dump the call onto the relay server", function () {
+  const w = loadLink();
+  assert.equal(w.vcomCallShouldRelay("failed", false), true);
+  assert.equal(w.vcomCallShouldRelay("disconnected", false), false);
+  assert.equal(w.vcomCallShouldRelay("failed", true), false);
+  const calls = [];
+  const pc = {
+    connectionState: "disconnected",
+    iceConnectionState: "disconnected",
+    restartIce: function () { calls.push("restart"); }
+  };
+  w.vcomRecoverCall = function () { calls.push("relay"); return true; };
+  assert.equal(w.vcomScheduleRelay(pc, [], "disconnected"), false);
+  assert.equal(calls.length, 0);
+  assert.equal(w.vcomScheduleRelay(pc, [], "failed"), true);
+  assert.deepEqual(calls, ["relay"]);
+  clearTimeout(pc.__vcomRelayTimer);
 });

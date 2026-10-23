@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid10";
+  window.__VCOM_LINK_BUILD = "vid21";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -9,23 +9,45 @@
     return m ? m[1] : "";
   }
   var guestCode = readGuest();
-  var ICE = {
-    iceServers: [
+  window.vcomIceServers = function () {
+    return [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
       { urls: "stun:stun.cloudflare.com:3478" },
       {
         urls: [
-          "turn:openrelay.metered.ca:80?transport=udp",
-          "turn:openrelay.metered.ca:80?transport=tcp",
-          "turn:openrelay.metered.ca:443?transport=tcp",
-          "turns:openrelay.metered.ca:443?transport=tcp"
+          "turn:34.165.7.195:3478?transport=udp",
+          "turn:34.165.7.195:3478?transport=tcp",
+          "turn:34.165.7.195:443?transport=tcp"
         ],
-        username: "openrelayproject",
+        username: "vcom",
         credential: "openrelayproject"
       }
-    ]
+    ];
   };
+  var ICE = { iceServers: window.vcomIceServers() };
+  (function wrapCallRelay() {
+    var NativePC = typeof RTCPeerConnection === "function" ? RTCPeerConnection : null;
+    if (!NativePC || NativePC.__vcomWrapped) return;
+    function VcomPeerConnection(config) {
+      var next = config;
+      try {
+        var servers = config && config.iceServers;
+        if (servers && servers.length) {
+          next = {};
+          for (var key in config) {
+            if (Object.prototype.hasOwnProperty.call(config, key)) next[key] = config[key];
+          }
+          next.iceServers = window.vcomIceServers();
+        }
+      } catch (eWrap) {}
+      return new NativePC(next);
+    }
+    VcomPeerConnection.prototype = NativePC.prototype;
+    VcomPeerConnection.__vcomWrapped = true;
+    try { Object.setPrototypeOf(VcomPeerConnection, NativePC); } catch (eProto) {}
+    window.RTCPeerConnection = VcomPeerConnection;
+  })();
   var firebaseConfig = {
     apiKey: "AIzaSyCN7q0RH1uew-Sb4xyl8YNSEPZM-jqaQJI",
     authDomain: "voip-call-app-7d0c3.firebaseapp.com",
@@ -169,6 +191,7 @@
       window.__vcomRingGain = null;
     }
   }
+  window.vcomIncomingNotes = [659.25, 987.77, 830.61, 1174.66];
   function startOsc() {
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
@@ -177,32 +200,40 @@
     if (ctx.state === "suspended" && ctx.resume) ctx.resume();
     stopOsc();
     var master = ctx.createGain();
-    master.gain.value = 0.55;
+    master.gain.value = 0.42;
     master.connect(ctx.destination);
     window.__vcomRingGain = master;
     window.__vcomRingOn = true;
-    var notes = [523.25, 659.25, 783.99, 1046.5, 783.99, 659.25];
-    var step = 0.22;
+    var notes = window.vcomIncomingNotes;
+    var step = 0.28;
     var play = function () {
       if (!window.__vcomRingOn) return;
       var t0 = ctx.currentTime + 0.02;
       notes.forEach(function (freq, i) {
         var osc = ctx.createOscillator();
+        var over = ctx.createOscillator();
         var gain = ctx.createGain();
         var start = t0 + i * step;
+        var last = i === notes.length - 1;
+        var hold = last ? 0.55 : step - 0.04;
         osc.type = "sine";
+        over.type = "triangle";
         osc.frequency.value = freq;
+        over.frequency.value = freq * 2;
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.85, start + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + step - 0.02);
+        gain.gain.exponentialRampToValueAtTime(last ? 0.7 : 0.9, start + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + hold);
         osc.connect(gain);
+        over.connect(gain);
         gain.connect(master);
         osc.start(start);
-        osc.stop(start + step);
+        over.start(start);
+        osc.stop(start + hold + 0.02);
+        over.stop(start + hold + 0.02);
       });
     };
     play();
-    window.__vcomRingTimer = setInterval(play, 2400);
+    window.__vcomRingTimer = setInterval(play, 2600);
   }
   function unlockRing() {
     if (ringUnlocked) return;
@@ -232,17 +263,17 @@
     var menu = document.getElementById("vcom-link-menu");
     if (menu) menu.hidden = true;
     try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
-    ringAudio.muted = false;
-    ringAudio.volume = 1;
-    ringAudio.loop = true;
-    try { ringAudio.currentTime = 0; } catch (e) {}
-    var pending = ringAudio.play();
-    if (pending && pending.then) {
-      pending.then(function () { window.__vcomRingErr = ""; stopOsc(); }).catch(function (err) {
+    try { ringAudio.pause(); ringAudio.currentTime = 0; } catch (e) {}
+    if (window.AudioContext || window.webkitAudioContext) startOsc();
+    else {
+      ringAudio.muted = false;
+      ringAudio.volume = 1;
+      ringAudio.loop = true;
+      var pending = ringAudio.play();
+      if (pending && pending.catch) pending.catch(function (err) {
         window.__vcomRingErr = String(err && err.message || err);
-        if (window.__vcomRinging) startOsc();
       });
-    } else if (ringAudio.paused) startOsc();
+    }
   };
   window.vcomStopRing = function () {
     window.__vcomRinging = false;
@@ -254,6 +285,130 @@
       try { if (navigator.audioSession) navigator.audioSession.type = "play-and-record"; } catch (e) {}
       if (window.vcomRouteOutputs) window.vcomRouteOutputs();
     }
+  };
+  var whistle = null;
+  var placeTimer = 0;
+  var vibeTimer = 0;
+  function clearIncomingTimers() {
+    if (placeTimer) { clearTimeout(placeTimer); placeTimer = 0; }
+    if (vibeTimer) { clearTimeout(vibeTimer); vibeTimer = 0; }
+  }
+  function ensureWhistle() {
+    if (whistle) return whistle;
+    var style = document.createElement("style");
+    style.textContent = "#vcom-incoming-whistle{position:fixed;z-index:70;margin:0;padding:0;border:0;border-radius:50%;object-fit:cover;object-position:center;pointer-events:none;background:transparent;display:block}#vcom-incoming-whistle[hidden]{display:none!important}";
+    document.head.appendChild(style);
+    whistle = document.createElement("img");
+    whistle.id = "vcom-incoming-whistle";
+    whistle.alt = "";
+    whistle.src = "/icons/vcom-splash.png?v=call11";
+    whistle.hidden = true;
+    document.body.appendChild(whistle);
+    window.addEventListener("resize", function () {
+      if (window.__vcomVibrating) placeWhistle();
+    });
+    return whistle;
+  }
+  function semanticsLabel(node) {
+    if (!node || !node.getAttribute) return "";
+    return node.getAttribute("aria-label") || "";
+  }
+  function semanticsBox(node) {
+    if (!node || !node.getBoundingClientRect) return null;
+    var rect = node.getBoundingClientRect();
+    if (!rect || rect.width < 8 || rect.height < 8 || rect.height > 72) return null;
+    if (rect.bottom < 0) return null;
+    return rect;
+  }
+  window.vcomIncomingWhistleBox = function (titleBottom, nextTop, centerX) {
+    var span = nextTop - titleBottom;
+    if (!(span > 40)) return null;
+    var outer = span * (126 / 178);
+    var inset = outer * (4 / 126);
+    var size = outer - inset * 2;
+    return {
+      top: titleBottom + span * (24 / 178) + inset,
+      left: centerX - size / 2,
+      size: size
+    };
+  };
+  function placeWhistle() {
+    var img = ensureWhistle();
+    var host = document.querySelector("flt-semantics-host");
+    var title = null;
+    var phone = null;
+    var phoneGap = 1e9;
+    if (host && host.querySelectorAll) {
+      var nodes = host.querySelectorAll("[aria-label]");
+      for (var i = 0; i < nodes.length; i++) {
+        var label = semanticsLabel(nodes[i]);
+        if (label !== "שיחה נכנסת" && label !== "שיחת וידאו נכנסת") continue;
+        var box = semanticsBox(nodes[i]);
+        if (!box) continue;
+        if (!title || box.height < title.height) title = box;
+      }
+      if (title) {
+        for (var j = 0; j < nodes.length; j++) {
+          var name = semanticsLabel(nodes[j]);
+          if (!name || name === "שיחה נכנסת" || name === "שיחת וידאו נכנסת") continue;
+          if (!/\d/.test(name)) continue;
+          var next = semanticsBox(nodes[j]);
+          if (!next) continue;
+          var gap = next.top - title.bottom;
+          if (gap > 40 && gap < 480 && gap < phoneGap) {
+            phoneGap = gap;
+            phone = next;
+          }
+        }
+      }
+    }
+    var spot = null;
+    if (title && phone) spot = window.vcomIncomingWhistleBox(title.bottom, phone.top, (title.left + title.right) / 2);
+    else if (title) {
+      var fallback = window.vcomIncomingWhistleBox(title.bottom, title.bottom + 178, (title.left + title.right) / 2);
+      spot = fallback;
+    }
+    if (!spot) {
+      img.hidden = true;
+      return false;
+    }
+    img.hidden = false;
+    img.style.top = Math.round(spot.top) + "px";
+    img.style.left = Math.round(spot.left) + "px";
+    img.style.width = Math.round(spot.size) + "px";
+    img.style.height = Math.round(spot.size) + "px";
+    return true;
+  }
+  function armWhistle() {
+    var tries = 0;
+    function tick() {
+      if (!window.__vcomVibrating) return;
+      placeWhistle();
+      tries += 1;
+      if (tries < 8) placeTimer = setTimeout(tick, tries < 3 ? 50 : 200);
+    }
+    tick();
+  }
+  function pulseVibrate() {
+    try { if (navigator.vibrate) navigator.vibrate([500, 200, 500, 700, 500, 200, 500, 700]); } catch (e) {}
+    vibeTimer = setTimeout(function () {
+      if (window.__vcomVibrating) pulseVibrate();
+    }, 3800);
+  }
+  window.vcomStartVibrate = function () {
+    if (window.__vcomVibrating) {
+      placeWhistle();
+      return;
+    }
+    window.__vcomVibrating = true;
+    pulseVibrate();
+    armWhistle();
+  };
+  window.vcomStopVibrate = function () {
+    window.__vcomVibrating = false;
+    clearIncomingTimers();
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+    if (whistle) whistle.hidden = true;
   };
   var MEDIA_KEY = "vcom.media.granted.v1";
   function mediaGranted() {
@@ -720,6 +875,10 @@
       window.vcomAttachCallVideo(video, stream, window.vcomVideoIsLocal(video) ? "local" : "remote");
       shown += 1;
     }
+    var list = [];
+    for (var n = 0; n < nodes.length; n++) list.push(nodes[n]);
+    var settled = window.vcomSettleLocalPreviews(list);
+    if (settled.hidden) shown = Math.max(0, shown - settled.hidden);
     return { ok: true, shown: shown };
   };
   window.vcomOpenCallMedia = function (wantVideo) {
@@ -1066,9 +1225,20 @@
         lineActive: false
       };
       if (displayName) userDoc.name = displayName;
+      function claimFreshPhone(next, tries) {
+        if (tries <= 0 || !fs.getDoc) return Promise.resolve();
+        var ref = fs.doc(db, "phoneNumbers", next);
+        return fs.getDoc(ref).then(function (snap) {
+          var taken = !!(snap && ((typeof snap.exists === "function" && snap.exists()) || snap.exists === true));
+          if (taken) return claimFreshPhone(tempSignupPhone(), tries - 1);
+          return fs.setDoc(ref, { userId: uid }).then(function () {
+            if (next === phone) return;
+            return fs.updateDoc(fs.doc(db, "users", uid), { phoneNumber: next });
+          });
+        });
+      }
       return fs.setDoc(fs.doc(db, "users", uid), userDoc).then(function () {
-        if (!fs.doc(db, "phoneNumbers", phone)) return;
-        return fs.setDoc(fs.doc(db, "phoneNumbers", phone), { userId: uid });
+        return claimFreshPhone(phone, 8);
       }).catch(function () {});
     }
     form.addEventListener("submit", function (event) {
@@ -1141,13 +1311,90 @@
     return true;
   };
 
+  window.vcomGuestIsReady = function (row, now) {
+    now = now == null ? Date.now() : now;
+    if (!row || row.status === "ended" || row.status === "active" || !row.guestReady) return false;
+    var at = asMillis(row.guestReadyAt);
+    if (!at) return false;
+    return now - at < 20000;
+  };
+  window.vcomLinkStatusText = function (row, now) {
+    now = now == null ? Date.now() : now;
+    if (!row) return "";
+    if (row.status === "active") return "בשיחה";
+    if (window.vcomGuestIsReady(row, now)) return "פתח את קישור השיחה · ניתן להתקשר";
+    return untilClock(row.expiresAt);
+  };
   window.vcomGuestStillDialable = function (row, now) {
     now = now == null ? Date.now() : now;
     if (!row || !row.code) return false;
     var exp = asMillis(row.expiresAt);
     if (exp && exp <= now && row.status !== "active") return false;
+    if (row.status === "active" && row.seenAt && exp && exp <= now && now - row.seenAt > 180000 && window.__vcomGuestActive !== row.code) return false;
     return true;
   };
+  window.vcomSessionNeedsWake = function (idleMs, sinceWakeMs) {
+    return (idleMs || 0) >= 15000 || (sinceWakeMs || 0) >= 1200000;
+  };
+  var sessionWakeAt = 0;
+  var sessionHiddenAt = 0;
+  var sessionWaking = false;
+  function sessionOnCall() {
+    try {
+      var bloc = window.__vcomBloc;
+      if (bloc && bloc.c && bloc.c.gnY && bloc.c.gnY()) return true;
+    } catch (e) {}
+    return !!(window.__vcomRinging || window.__vcomGuestActive);
+  }
+  window.vcomWakeSession = function () {
+    var now = Date.now();
+    var idle = sessionHiddenAt && document.visibilityState !== "hidden" ? now - sessionHiddenAt : 0;
+    if (document.visibilityState !== "hidden") sessionHiddenAt = 0;
+    if (!sessionWakeAt) sessionWakeAt = now;
+    if (sessionWaking || !window.vcomSessionNeedsWake(idle, now - sessionWakeAt)) return;
+    sessionWaking = true;
+    sessionWakeAt = now;
+    var jobs = [];
+    try {
+      var auth = window.firebase_auth;
+      var user = auth && auth.getAuth ? auth.getAuth().currentUser : null;
+      if (user && user.getIdToken) jobs.push(Promise.resolve(user.getIdToken(true)).catch(function () {}));
+    } catch (eAuth) {}
+    function kick(fs, db) {
+      if (!fs || !db) return;
+      var step = Promise.resolve();
+      if (!sessionOnCall() && fs.disableNetwork) step = Promise.resolve().then(function () { return fs.disableNetwork(db); }).catch(function () {});
+      jobs.push(step.then(function () {
+        if (fs.enableNetwork) return fs.enableNetwork(db);
+      }).catch(function () {}));
+    }
+    try {
+      var fs = window.firebase_firestore;
+      if (fs && fs.getFirestore) kick(fs, fs.getFirestore());
+    } catch (eFs) {}
+    if (window.__vcomGuestFs && window.__vcomGuestDb) kick(window.__vcomGuestFs, window.__vcomGuestDb);
+    Promise.all(jobs).catch(function () {}).then(function () {
+      sessionWaking = false;
+      if (!sessionOnCall() && window.vcomRebindGuestBook) window.vcomRebindGuestBook();
+      try {
+        var bloc = window.__vcomBloc;
+        if (bloc && bloc.fy && !sessionOnCall() && now - (bloc.__vcomDialAt || 0) > 12000) {
+          bloc.fy = false;
+          bloc.__vcomDialAt = 0;
+        }
+      } catch (eBloc) {}
+    });
+  };
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") sessionHiddenAt = Date.now();
+    else window.vcomWakeSession();
+  });
+  window.addEventListener("online", function () { window.vcomWakeSession(); });
+  window.addEventListener("pageshow", function () { window.vcomWakeSession(); });
+  setInterval(function () {
+    if (document.visibilityState === "hidden") return;
+    window.vcomWakeSession();
+  }, 60000);
 
   window.vcomIgnoreStaleEnded = function (data, offerSent) {
     if (offerSent) return false;
@@ -1225,11 +1472,129 @@
     var inDrawer = rtl ? x > view - width : x < width;
     return !inDrawer;
   };
+  window.vcomComposerOnScreen = function (labels) {
+    if (labels == null) return null;
+    for (var i = 0; i < labels.length; i++) {
+      var item = labels[i] || {};
+      if (!item.visible) continue;
+      var label = String(item.label || "").replace(/\s+/g, " ").trim();
+      if (label === "הודעה") return true;
+      if (item.bottom && item.role === "textbox" && label !== "הודעות") return true;
+    }
+    return false;
+  };
   window.vcomChatSurfaceOpen = function (chat, tab, chatTab, blocked) {
     if (!chat) return false;
     if (blocked) return false;
     if (chatTab == null || chatTab === "") return false;
     return (tab | 0) === (chatTab | 0);
+  };
+  window.vcomChatOverlayOpen = function (chatOpen, grouped, composer, seenAt, now) {
+    if (grouped) return true;
+    if (!chatOpen) return false;
+    if (composer === true || composer == null) return true;
+    var at = Number(seenAt) || 0;
+    if (!at) return false;
+    return (Number(now) || 0) - at < 800;
+  };
+  window.vcomChatButtonsOpen = function (overlayOpen, composer, seenAt, now) {
+    if (!overlayOpen) return false;
+    if (composer !== false) return true;
+    var at = Number(seenAt) || 0;
+    if (!at) return false;
+    return (Number(now) || 0) - at < 350;
+  };
+  window.vcomMessageTapTarget = function (buttons, x, y) {
+    var found = null;
+    (buttons || []).forEach(function (box) {
+      if (!box || found) return;
+      if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) found = box;
+    });
+    return found;
+  };
+  window.vcomHeaderLogoVisible = function (state) {
+    state = state || {};
+    if (!state.menu) return false;
+    if (state.guest || state.ringing || state.onCall || state.account) return false;
+    return true;
+  };
+  window.vcomMenuWordmarkBox = function (viewWidth, drawerWidth, open, rtl) {
+    var width = Math.min(drawerWidth >= 200 ? drawerWidth : 304, 304, Number(viewWidth) || 0);
+    var x = Number(open);
+    if (!isFinite(x) || x < 0) x = 0;
+    if (x > 1) x = 1;
+    var inset = 18;
+    var shift = (1 - x) * width;
+    var left = rtl ? ((Number(viewWidth) || 0) - width + inset + shift) : (inset - shift);
+    return { left: Math.round(left), top: 16 };
+  };
+  window.vcomLocalPreviewOn = function (video) {
+    var stream = video && video.srcObject;
+    if (!stream || !stream.getVideoTracks) return false;
+    var tracks = stream.getVideoTracks();
+    for (var i = 0; i < tracks.length; i++) {
+      var track = tracks[i];
+      if (track && track.readyState !== "ended" && track.enabled !== false) return true;
+    }
+    return false;
+  };
+  window.vcomSettleLocalPreviews = function (videos) {
+    var locals = [];
+    (videos || []).forEach(function (video) {
+      if (!video) return;
+      var local = video.id === "vcom-guest-local-video" || video.id === "vcom-stage-local";
+      if (!local && video.getAttribute && (video.getAttribute("data-vcom-local") === "1" || video.getAttribute("data-vcom-kind") === "local")) local = true;
+      if (!local && window.vcomStreamIsLocal && window.vcomStreamIsLocal(video.srcObject)) local = true;
+      if (local) locals.push(video);
+    });
+    var keep = null;
+    for (var i = 0; i < locals.length; i++) {
+      if (window.vcomLocalPreviewOn(locals[i])) keep = locals[i];
+    }
+    var hidden = 0;
+    locals.forEach(function (video) {
+      if (video === keep) return;
+      if (window.vcomHideLiftedVideo) window.vcomHideLiftedVideo(video);
+      hidden += 1;
+    });
+    return { kept: keep ? 1 : 0, hidden: hidden };
+  };
+  window.vcomPlanRequest = function (data) {
+    data = data || {};
+    return data.planRequest === "plus" || data.planRequest === "extra" ? data.planRequest : "";
+  };
+  window.vcomCallShouldRelay = function (iceState, relayed) {
+    if (relayed) return false;
+    return iceState === "failed";
+  };
+  window.vcomScheduleRelay = function (pc, iceServers, iceState) {
+    if (!pc || pc.__vcomRelay || pc.connectionState === "closed") return false;
+    if (iceState === "connected" || iceState === "completed" || iceState === "closed") {
+      if (pc.__vcomRelayTimer) {
+        clearTimeout(pc.__vcomRelayTimer);
+        pc.__vcomRelayTimer = 0;
+      }
+      return false;
+    }
+    if (window.vcomCallShouldRelay(iceState, false)) return window.vcomRecoverCall(pc, iceServers);
+    if (iceState !== "disconnected" || pc.__vcomRelayTimer) return false;
+    pc.__vcomRelayTimer = setTimeout(function () {
+      pc.__vcomRelayTimer = 0;
+      if (pc.__vcomRelay || pc.connectionState === "closed") return;
+      var state = pc.iceConnectionState || pc.connectionState;
+      if (state === "disconnected" || state === "failed") window.vcomRecoverCall(pc, iceServers);
+    }, 4000);
+    return false;
+  };
+  window.vcomRecoverCall = function (pc, iceServers) {
+    if (!pc || pc.__vcomRelay || typeof pc.restartIce !== "function") return false;
+    pc.__vcomRelay = true;
+    try {
+      if (typeof pc.setConfiguration === "function") {
+        pc.setConfiguration({ iceServers: iceServers || [], iceTransportPolicy: "relay" });
+      }
+    } catch (eSet) {}
+    try { pc.restartIce(); return true; } catch (eIce) { return false; }
   };
   window.vcomCloseSideMenu = function () {
     var state = window.__vcomDrawerState;
@@ -1238,6 +1603,47 @@
     }
     if (typeof window.__vcomDrawerMove === "function") window.__vcomDrawerMove(0);
     return false;
+  };
+  window.vcomPhoneKey = function (value) {
+    var digits = String(value || "").replace(/\D/g, "");
+    return /^020\d{6}$/.test(digits) ? digits : "";
+  };
+  window.vcomUsageView = function (data) {
+    data = data || {};
+    var seconds = Math.max(0, Number(data.voiceSeconds) || 0);
+    var minutes = Math.round(seconds / 60);
+    var video = Math.max(0, Math.round(Number(data.videoCalls) || 0));
+    var cap = 3000;
+    var planId = data.plan === "extra" || data.plan === "plus" ? data.plan : "";
+    var plan = planId === "extra" ? "VCOM EXTRA PLUS" : (planId === "plus" ? "VCOM PLUS" : "");
+    return { minutes: minutes, video: video, cap: cap, ratio: Math.max(0, Math.min(1, minutes / cap)), plan: plan, planId: planId };
+  };
+  window.vcomRecordCallUse = function (seconds, video) {
+    seconds = Math.max(0, Math.round(Number(seconds) || 0));
+    if (seconds < 1) return false;
+    var now = Date.now();
+    if (now - (window.__vcomUsageAt || 0) < 5000) return false;
+    var fs = window.firebase_firestore;
+    var uid = window.__vcomUid;
+    if (!fs || !uid || !fs.getFirestore || !fs.doc || !fs.updateDoc) return false;
+    if (typeof fs.increment !== "function" && typeof fs.runTransaction !== "function") return false;
+    var ref = fs.doc(fs.getFirestore(), "users", uid);
+    window.__vcomUsageAt = now;
+    if (typeof fs.increment === "function") {
+      var patch = { voiceSeconds: fs.increment(seconds) };
+      if (video) patch.videoCalls = fs.increment(1);
+      fs.updateDoc(ref, patch).catch(function () {});
+      return true;
+    }
+    fs.runTransaction(fs.getFirestore(), function (tx) {
+      return tx.get(ref).then(function (snap) {
+        var data = (snap && snap.data && snap.data()) || {};
+        var next = { voiceSeconds: (Number(data.voiceSeconds) || 0) + seconds };
+        if (video) next.videoCalls = (Number(data.videoCalls) || 0) + 1;
+        tx.update(ref, next);
+      });
+    }).catch(function () {});
+    return true;
   };
   window.vcomDefaultSpeakerOn = false;
   window.vcomCallAudioRoute = function (speakerOn) {
@@ -1880,9 +2286,13 @@
           db = fs.getFirestore(app);
         }
         var ref = fs.doc(db, "guestLinks", code);
+        window.__vcomGuestFs = fs;
+        window.__vcomGuestDb = db;
         window.__vcomGuestEndVisit = function () { endVisit(fs, ref); };
         var markedReady = false;
-        fs.onSnapshot(ref, function (snap) {
+        function listenGuest() {
+        var guestUnsub = fs.onSnapshot(ref, function (snap) {
+          window.__vcomGuestListenFails = 0;
           var data = snap.exists() ? snap.data() || {} : null;
           window.__vcomGuestData = data;
           if (window.vcomGuestResumeFromEnded(data, endingVisit)) {
@@ -1894,9 +2304,21 @@
             paint(data);
             return;
           }
-          if (data && data.status === "waiting" && !data.offer && !markedReady && fs.updateDoc) {
-            markedReady = true;
-            fs.updateDoc(ref, { status: "ringing" }).catch(function () {});
+          if (data && (data.status === "waiting" || data.status === "ringing") && !data.offer && fs.updateDoc) {
+            var readyNow = Date.now();
+            if (!markedReady) {
+              markedReady = true;
+              fs.updateDoc(ref, { status: "ringing", guestReady: true, guestReadyAt: readyNow }).catch(function () {});
+              if (window.__vcomGuestReadyTimer) clearInterval(window.__vcomGuestReadyTimer);
+              window.__vcomGuestReadyTimer = setInterval(function () {
+                if (!nodes.wait || nodes.wait.hidden) return;
+                fs.updateDoc(ref, { guestReady: true, guestReadyAt: Date.now() }).catch(function () {});
+              }, 8000);
+            }
+          } else if (window.__vcomGuestReadyTimer && data && data.offer) {
+            clearInterval(window.__vcomGuestReadyTimer);
+            window.__vcomGuestReadyTimer = 0;
+            fs.updateDoc(ref, { guestReady: false }).catch(function () {});
           }
           if (data && data.status === "ended") {
             endVisit(fs, ref);
@@ -1911,8 +2333,13 @@
             nodes.timer.hidden = false;
           }
         }, function () {
-          showDead();
+          try { guestUnsub(); } catch (eUn) {}
+          window.__vcomGuestListenFails = (window.__vcomGuestListenFails || 0) + 1;
+          var delay = Math.min(30000, 2000 * Math.pow(2, window.__vcomGuestListenFails));
+          setTimeout(listenGuest, delay);
         });
+        }
+        listenGuest();
         nodes.answer.addEventListener("click", function () {
           var data = window.__vcomGuestData;
           if (!data || !data.offer || session) return;
@@ -2052,7 +2479,18 @@
         fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
       }
       if (wasConnected && (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed")) {
-        if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
+        if (pc.connectionState !== "closed") window.vcomScheduleRelay(pc, ICE.iceServers, pc.connectionState === "failed" ? "failed" : "disconnected");
+        if (pc.__vcomEndTimer) return;
+        if (pc.connectionState === "closed") {
+          if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
+          return;
+        }
+        pc.__vcomEndTimer = setTimeout(function () {
+          pc.__vcomEndTimer = 0;
+          if (state.closed) return;
+          if (pc.connectionState === "connected" || pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") return;
+          if (window.__vcomGuestEndVisit) window.__vcomGuestEndVisit();
+        }, 8000);
       }
     };
     mediaPromise.then(function (stream) {
@@ -2091,6 +2529,79 @@
     return state;
   }
 
+  function wireAccount() {
+    if (document.getElementById("vcom-account")) return;
+    var root = document.createElement("section");
+    root.id = "vcom-account";
+    root.hidden = true;
+    root.innerHTML = '<header><button type="button" data-back aria-label="חזרה">→</button><b>חבילות</b></header>'
+      + '<p class="vcom-current" data-current></p>'
+      + '<div data-plans></div>'
+      + '<p data-status></p>';
+    document.body.appendChild(root);
+    var plans = root.querySelector("[data-plans]");
+    var status = root.querySelector("[data-status]");
+    var held = {};
+    function paint(data) {
+      held = data || {};
+      var view = window.vcomUsageView(held);
+      var request = window.vcomPlanRequest(held);
+      root.querySelector("[data-current]").textContent = view.plan ? ("המסלול הפעיל: " + view.plan) : "עדיין אין מסלול מאושר";
+      plans.querySelectorAll("[data-plan]").forEach(function (card) {
+        var id = card.getAttribute("data-plan");
+        var small = card.querySelector("small");
+        card.classList.toggle("on", id === view.planId);
+        card.classList.toggle("wait", !!request && id === request && id !== view.planId);
+        if (id === view.planId) small.textContent = "המסלול הפעיל";
+        else if (request === id) small.textContent = "ממתין לאישור";
+        else small.textContent = "הבחירה נשלחת לאישור";
+      });
+    }
+    function choose(id) {
+      var fs = window.firebase_firestore;
+      var uid = window.__vcomUid;
+      if (!fs || !uid || !fs.updateDoc) {
+        status.textContent = "שמירת המסלול נכשלה";
+        return;
+      }
+      status.textContent = "";
+      var next = { voiceSeconds: held.voiceSeconds || 0, videoCalls: held.videoCalls || 0, plan: held.plan || "", planRequest: id };
+      fs.updateDoc(fs.doc(fs.getFirestore(), "users", uid), { planRequest: id }).then(function () {
+        paint(next);
+      }).catch(function () {
+        status.textContent = "שמירת המסלול נכשלה";
+      });
+    }
+    [
+      { id: "plus", name: "VCOM PLUS" },
+      { id: "extra", name: "VCOM EXTRA PLUS" }
+    ].forEach(function (plan) {
+      var card = document.createElement("button");
+      card.type = "button";
+      card.className = "vcom-plan";
+      card.setAttribute("data-plan", plan.id);
+      card.innerHTML = '<img src="/icons/vcom-handset.png" alt=""><span><strong></strong><small>הבחירה נשמרת בחשבון</small></span>';
+      card.querySelector("strong").textContent = plan.name;
+      card.addEventListener("click", function () { choose(plan.id); });
+      plans.appendChild(card);
+    });
+    root.querySelector("[data-back]").addEventListener("click", function () { root.hidden = true; });
+    window.vcomOpenAccount = function () {
+      if (window.vcomCloseSideMenu) window.vcomCloseSideMenu();
+      status.textContent = "";
+      root.hidden = false;
+      paint(held);
+      var fs = window.firebase_firestore;
+      var uid = window.__vcomUid;
+      if (!fs || !uid || !fs.getDoc) return;
+      fs.getDoc(fs.doc(fs.getFirestore(), "users", uid)).then(function (snap) {
+        paint((snap && snap.data && snap.data()) || {});
+      }).catch(function () {
+        status.textContent = "לא הצלחנו לטעון את החבילות";
+      });
+    };
+  }
+
   function bootIssuer() {
     var style = document.createElement("style");
     style.textContent = issuerCss();
@@ -2098,7 +2609,7 @@
     var menu = document.createElement("div");
     menu.id = "vcom-link-menu";
     menu.hidden = true;
-    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
+    menu.innerHTML = '<button id="vcom-link-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10.6 13.4a4 4 0 0 1 0-5.6l2.1-2.1a4 4 0 0 1 5.7 5.7l-1 1a.9.9 0 1 1-1.3-1.3l1-1a2.2 2.2 0 1 0-3.1-3.1l-2.1 2.1a2.2 2.2 0 0 0 0 3.1.9.9 0 1 1-1.3 1.2zm2.8-2.8a.9.9 0 0 1 1.3 1.3 4 4 0 0 1-5.7 0L7 13.9A4 4 0 1 1 1.3 8.2l1-1a.9.9 0 1 1 1.3 1.3l-1 1a2.2 2.2 0 1 0 3.1 3.1l2.1-2.1a2.2 2.2 0 0 0 3.1 0z"/></svg></span><span class="vcom-link-open-text">הנפקת קישור שיחה</span></button><button id="vcom-chatcom" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M5 6.5h14v8.5H9.2L5 18.2V6.5z"/></svg></span><span class="vcom-link-open-text">Chatcom</span></button><button id="vcom-account-open" type="button"><span class="vcom-link-open-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="24" height="24"><rect x="4" y="7" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M8 7V5.5A1.5 1.5 0 0 1 9.5 4H19a1 1 0 0 1 1 1v9.5a1.5 1.5 0 0 1-1.5 1.5H16"/></svg></span><span class="vcom-link-open-text">חבילות</span></button><form id="vcom-link-form" hidden><input id="vcom-link-name" maxlength="32" autocomplete="name" enterkeyhint="done" placeholder="שם מקבל/ת השיחה"><p class="vcom-link-error" data-error></p><button type="submit" data-ok>אישור</button></form><div id="vcom-link-banner" hidden></div>';
     document.body.appendChild(menu);
     var logo = document.createElement("img");
     logo.id = "vcom-menu-logo";
@@ -2199,7 +2710,7 @@
       phone.textContent = pretty(row.phone);
       var meta = document.createElement("div");
       meta.className = "vcom-link-meta";
-      meta.textContent = row.status === "active" ? "בשיחה" : untilClock(row.expiresAt);
+      meta.textContent = window.vcomLinkStatusText(row);
       var copyLink = document.createElement("button");
       copyLink.type = "button";
       copyLink.className = "vcom-link-copy";
@@ -2289,7 +2800,10 @@
         else {
           row.status = data.status || row.status;
           row.expiresAt = asMillis(data.expiresAt) || row.expiresAt;
+          row.guestReady = data.guestReady === true;
+          row.guestReadyAt = asMillis(data.guestReadyAt) || 0;
           row.fromLink = true;
+          row.seenAt = Date.now();
         }
         render();
       }, function () {
@@ -2318,6 +2832,15 @@
       if (on) nameInput.focus();
     }
     open.addEventListener("click", function () { showForm(!composing); });
+    var chatcom = menu.querySelector("#vcom-chatcom");
+    if (chatcom) chatcom.addEventListener("click", function () {
+      if (window.vcomOpenChatcom) window.vcomOpenChatcom();
+    });
+    var accountOpen = menu.querySelector("#vcom-account-open");
+    if (accountOpen) accountOpen.addEventListener("click", function () {
+      if (window.vcomOpenAccount) window.vcomOpenAccount();
+    });
+    wireAccount();
     var okButton = form.querySelector("[data-ok]");
     function newestExpiry() {
       var max = 0;
@@ -2445,7 +2968,8 @@
             status: "waiting",
             url: shareUrl(code),
             local: true,
-            fromLink: true
+            fromLink: true,
+            seenAt: Date.now()
           };
           watch(code);
           render();
@@ -2500,6 +3024,7 @@
         var shift = (1 - x) * spot.width;
         menu.style.transform = "translate3d(" + (spot.rtl ? shift : -shift) + "px,0,0)";
       } else menu.style.transform = "";
+      if (window.vcomSyncHeaderLogo) window.vcomSyncHeaderLogo();
     }
     window.__vcomDrawerMove = applyDrawer;
     applyDrawer(window.__vcomDrawerX || 0);
@@ -2520,11 +3045,84 @@
           var next = value | 0;
           var changed = next !== tabNow;
           tabNow = next;
-          if (changed && (window.__vcomDrawerX || 0) > 0.2) window.vcomCloseSideMenu();
+          if (!changed) return;
+          if ((window.__vcomDrawerX || 0) > 0.2) window.vcomCloseSideMenu();
+          var media = document.getElementById("vcom-chat-media");
+          if (!window.__vcomGroupId && media && (next !== (window.__vcomChatTab | 0) || !window.__vcomOpenChat)) {
+            window.__vcomComposerAt = 0;
+            media.hidden = true;
+            var sheetNow = document.getElementById("vcom-chat-sheet");
+            if (sheetNow) sheetNow.hidden = true;
+          }
         }
       });
     } catch (eTab) {}
     wireChatMedia();
+    function ensureHeaderLogo() {
+      if (document.getElementById("vcom-header-logo")) return;
+      var mark = document.createElement("div");
+      mark.id = "vcom-header-logo";
+      mark.setAttribute("aria-label", "VCOM");
+      mark.dir = "ltr";
+      mark.hidden = true;
+      mark.innerHTML = '<span class="v">V</span><span class="com">COM</span>';
+      document.body.appendChild(mark);
+    }
+    window.vcomSyncHeaderLogo = function () {
+      ensureHeaderLogo();
+      var mark = document.getElementById("vcom-header-logo");
+      if (!mark) return;
+      var account = document.getElementById("vcom-account");
+      var guest = !!document.getElementById("vcom-guest");
+      try {
+        if (document.documentElement.classList && document.documentElement.classList.contains) {
+          guest = guest || document.documentElement.classList.contains("vcom-guest-page");
+        }
+      } catch (eGuest) {}
+      var menuOpen = !!(menu && !menu.hidden);
+      mark.hidden = !window.vcomHeaderLogoVisible({
+        guest: guest,
+        ringing: !!window.__vcomRinging,
+        onCall: isOnCall(),
+        account: !!(account && !account.hidden),
+        menu: menuOpen
+      });
+      if (mark.hidden || !menu) return;
+      var rect = menu.getBoundingClientRect ? menu.getBoundingClientRect() : null;
+      var left = rect && isFinite(rect.left) && rect.width >= 8 ? rect.left + 18 : 18;
+      if (!rect || !isFinite(rect.left) || rect.width < 8) {
+        var rtl = String(document.documentElement.getAttribute("dir") || "").toLowerCase() === "rtl";
+        left = window.vcomMenuWordmarkBox(window.innerWidth, window.__vcomDrawerWidth, window.__vcomDrawerX || 0, rtl).left;
+      }
+      mark.style.top = "calc(env(safe-area-inset-top, 0px) + 16px)";
+      mark.style.left = left + "px";
+      mark.style.right = "auto";
+    };
+    window.vcomSyncHeaderLogo();
+    document.addEventListener("pointerup", function (event) {
+      if (event.button != null && event.button !== 0) return;
+      var host = document.querySelector("flt-semantics-host");
+      if (!host || !host.querySelectorAll) return;
+      var nodes = host.querySelectorAll("[aria-label='הודעה']");
+      var boxes = [];
+      for (var i = 0; i < nodes.length; i++) {
+        var rect = nodes[i].getBoundingClientRect ? nodes[i].getBoundingClientRect() : null;
+        if (!rect || rect.width < 8 || rect.height < 8) continue;
+        boxes.push({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, node: nodes[i] });
+      }
+      var hit = window.vcomMessageTapTarget(boxes, event.clientX, event.clientY);
+      if (!hit || !hit.node) return;
+      var target = event.target;
+      if (target && hit.node.contains && hit.node.contains(target)) return;
+      if (target && target.closest && target.closest("flt-semantics-host")) return;
+      var media = document.getElementById("vcom-chat-media");
+      if (media && !media.hidden) {
+        media.hidden = true;
+        if (media.classList) media.classList.add("vcom-composer-away");
+        if (!window.__vcomGroupId) window.__vcomOpenChat = "";
+      }
+      try { hit.node.click(); } catch (eClick) {}
+    }, true);
     function tick() {
       var now = Date.now();
       Object.keys(window.__vcomGuestBook).forEach(function (phone) {
@@ -2537,27 +3135,17 @@
       if (!row) {
         if (!banner.hidden) render();
       } else if (!meta) render();
-      else meta.textContent = row.status === "active" ? "בשיחה" : untilClock(row.expiresAt);
+      else meta.textContent = window.vcomLinkStatusText(row);
     }
     setInterval(tick, 2000);
     var userUnsub = null;
     var authBound = false;
-    function bindUser() {
+    function attachUser(user) {
       var fs = fsNow();
-      var auth = window.firebase_auth;
-      if (!fs || !auth || !auth.getAuth || !auth.onAuthStateChanged || !fs.onSnapshot) return false;
-      if (authBound) return true;
-      authBound = true;
-      auth.onAuthStateChanged(auth.getAuth(), function (user) {
-        window.__vcomUid = user ? user.uid : "";
-        if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
-        if (!user) {
-          window.__vcomGuestBook = {};
-          window.__vcomProfile = {};
-          render();
-          return;
-        }
-        userUnsub = fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
+      if (!fs || !user || !fs.onSnapshot) return;
+      if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
+      userUnsub = fs.onSnapshot(fs.doc(fs.getFirestore(), "users", user.uid), function (snap) {
+        window.__vcomUserWatchFails = 0;
           var data = snap.exists() ? snap.data() || {} : {};
           window.__vcomProfile = {
             name: data.name || data.displayName || "",
@@ -2577,7 +3165,9 @@
               expiresAt: prev && prev.fromLink ? prev.expiresAt : (asMillis(row.expiresAt) || (prev && prev.expiresAt) || 0),
               status: prev && prev.fromLink ? prev.status : (row.status || "waiting"),
               url: shareUrl(code),
-              fromLink: !!(prev && prev.fromLink)
+              fromLink: !!(prev && prev.fromLink),
+              local: !!(prev && prev.local),
+              seenAt: Date.now()
             };
             if (!window.vcomLinkStillVisible(merged)) return;
             livePhones[phone] = 1;
@@ -2595,7 +3185,46 @@
           });
           render();
           if (busy && newestExpiry() > (window.__vcomIssueSeen || 0)) finishIssue(window.__vcomIssueGen);
-        }, function () {});
+        }, function () {
+          try { if (typeof userUnsub === "function") userUnsub(); } catch (eUn) {}
+          userUnsub = null;
+          window.__vcomUserWatchFails = (window.__vcomUserWatchFails || 0) + 1;
+          var delay = Math.min(30000, 2000 * Math.pow(2, window.__vcomUserWatchFails));
+          setTimeout(function () { attachUser(user); }, delay);
+        });
+    }
+    window.vcomRebindGuestBook = function () {
+      Object.keys(watched).forEach(function (code) {
+        try { if (typeof watched[code] === "function") watched[code](); } catch (e) {}
+        delete watched[code];
+      });
+      var user = null;
+      try {
+        var auth = window.firebase_auth;
+        user = auth && auth.getAuth ? auth.getAuth().currentUser : null;
+      } catch (eUser) {}
+      if (user) attachUser(user);
+      Object.keys(window.__vcomGuestBook || {}).forEach(function (phone) {
+        var row = window.__vcomGuestBook[phone];
+        if (row && row.code) watch(row.code);
+      });
+    };
+    function bindUser() {
+      var fs = fsNow();
+      var auth = window.firebase_auth;
+      if (!fs || !auth || !auth.getAuth || !auth.onAuthStateChanged || !fs.onSnapshot) return false;
+      if (authBound) return true;
+      authBound = true;
+      auth.onAuthStateChanged(auth.getAuth(), function (user) {
+        window.__vcomUid = user ? user.uid : "";
+        if (!user) {
+          if (userUnsub) { try { userUnsub(); } catch (e) {} userUnsub = null; }
+          window.__vcomGuestBook = {};
+          window.__vcomProfile = {};
+          render();
+          return;
+        }
+        attachUser(user);
       });
       return true;
     }
@@ -2644,6 +3273,9 @@
     var current = caller;
     caller = null;
     if (!current) return;
+    if (current.usageStart && window.vcomRecordCallUse) {
+      window.vcomRecordCallUse(Math.round((Date.now() - current.usageStart) / 1000), !!current.video);
+    }
     current.closed = true;
     if (current.unsub) {
       try { current.unsub(); } catch (eUn) {}
@@ -2727,6 +3359,7 @@
     function markConnected() {
       if (current.closed || token !== window.__vcomGuestToken || current.markedLive) return;
       current.markedLive = true;
+      current.usageStart = current.usageStart || Date.now();
       stopBack();
       fs.updateDoc(ref, { status: "active", callStartedAt: Date.now() }).catch(function () {});
       if (window.__vcomSetCallPhase) window.__vcomSetCallPhase("active");
@@ -2740,6 +3373,7 @@
     pc.oniceconnectionstatechange = function () {
       if (current.closed || token !== window.__vcomGuestToken) return;
       if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") markConnected();
+      window.vcomScheduleRelay(pc, ICE.iceServers, pc.iceConnectionState);
     };
     current.unsub = fs.onSnapshot(ref, function (snap) {
       if (current.closed || token !== window.__vcomGuestToken) return;
@@ -2835,28 +3469,30 @@
     var root = document.createElement("div");
     root.id = "vcom-chat-media";
     root.hidden = true;
-    root.innerHTML = '<div id="vcom-chat-thread"></div><div id="vcom-chat-tools"><button type="button" data-camera aria-label="מצלמה">מצלמה</button><button type="button" data-gallery aria-label="גלריה">גלריה</button><button type="button" data-video aria-label="סרטון">סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה">הקלטה</button><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
+    root.innerHTML = '<div id="vcom-group-head" hidden><button type="button" data-group-back aria-label="חזרה">→</button><div><strong data-group-name>Chatcom</strong><small data-group-meta></small></div></div><div id="vcom-chat-thread"></div><button type="button" id="vcom-chat-plus" data-plus aria-label="הוספה">+</button><div id="vcom-chat-sheet" hidden><button type="button" data-gallery>שליחת תמונה מהגלריה</button><button type="button" data-capture>צילום תמונה / סרטון</button></div><button type="button" id="vcom-chat-mic" data-mic aria-label="הקלטה"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></button><div id="vcom-group-compose" hidden><button type="button" data-group-send aria-label="שליחה">➤</button><input id="vcom-group-text" maxlength="2000" enterkeyhint="send" placeholder="הודעה"></div><p id="vcom-chat-media-status"></p><p id="vcom-chat-rec" hidden>מקליט… שחרר לשליחה</p>';
     document.body.appendChild(root);
     var thread = root.querySelector("#vcom-chat-thread");
+    var sheet = root.querySelector("#vcom-chat-sheet");
+    var plus = root.querySelector("[data-plus]");
+    var groupHead = root.querySelector("#vcom-group-head");
+    var groupName = root.querySelector("[data-group-name]");
+    var groupMeta = root.querySelector("[data-group-meta]");
+    var groupCompose = root.querySelector("#vcom-group-compose");
+    var groupText = root.querySelector("#vcom-group-text");
     var status = root.querySelector("#vcom-chat-media-status");
     var recLabel = root.querySelector("#vcom-chat-rec");
     var mic = root.querySelector("[data-mic]");
     var camera = document.createElement("input");
     camera.type = "file";
-    camera.accept = "image/*";
-    camera.capture = "environment";
+    camera.accept = "image/*,video/*";
+    camera.setAttribute("capture", "environment");
     camera.hidden = true;
     var gallery = document.createElement("input");
     gallery.type = "file";
     gallery.accept = "image/*";
     gallery.hidden = true;
-    var video = document.createElement("input");
-    video.type = "file";
-    video.accept = "video/*";
-    video.hidden = true;
     root.appendChild(camera);
     root.appendChild(gallery);
-    root.appendChild(video);
     var watched = "";
     var unsub = null;
     var sending = false;
@@ -2864,6 +3500,7 @@
     var hold = false;
     var startedAt = 0;
     var messages = [];
+    var drawn = "";
     var player = document.createElement("audio");
     var playingId = "";
     function chatOpen() {
@@ -2888,24 +3525,38 @@
       return !!(user && senderId === user.uid);
     }
     function paint() {
+      var parts = [playingId];
+      for (var i = 0; i < messages.length; i++) {
+        var mark = messages[i];
+        var kind = mark.media ? mark.media.kind : "text";
+        parts.push(mark.id, mark.time, mark.mine ? "1" : "0", kind, kind === "text" ? (mark.text || "") : ((mark.media && mark.media.url) || ""));
+      }
+      var signature = parts.join("\u0001");
+      if (signature === drawn && thread.childNodes.length === messages.length) return;
+      drawn = signature;
       var nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
       thread.replaceChildren();
       messages.forEach(function (item) {
         var bubble = document.createElement("div");
-        bubble.className = "vcom-bubble" + (item.mine ? " mine" : "");
+        var mediaKind = item.media && item.media.kind;
+        var plain = mediaKind === "image" || mediaKind === "video";
+        bubble.className = "vcom-bubble" + (item.mine ? " mine" : "") + (plain ? " plain" : "");
         bubble.dataset.id = item.id;
         bubble.dataset.sender = item.senderId || "";
         var body;
-        if (item.media && item.media.kind === "image") {
+        if (mediaKind === "image") {
           body = document.createElement("img");
           body.alt = "";
+          body.decoding = "async";
+          body.loading = "lazy";
           body.src = item.media.url;
-        } else if (item.media && item.media.kind === "video") {
+        } else if (mediaKind === "video") {
           body = document.createElement("video");
           body.controls = true;
           body.playsInline = true;
+          body.preload = "metadata";
           body.src = item.media.url;
-        } else if (item.media && item.media.kind === "audio") {
+        } else if (mediaKind === "audio") {
           body = document.createElement("button");
           body.type = "button";
           body.className = "vcom-voice" + (playingId === item.id ? " on" : "");
@@ -2961,6 +3612,7 @@
       if (unsub) { try { unsub(); } catch (eUn) {} unsub = null; }
       watched = chatId || "";
       messages = [];
+      drawn = "";
       thread.replaceChildren();
       if (!watched) return;
       var fs = window.firebase_firestore;
@@ -2986,12 +3638,12 @@
         img.onload = function () {
           var canvas = document.createElement("canvas");
           var longest = Math.max(img.width || 1, img.height || 1);
-          var scale = Math.min(1, 1280 / longest);
+          var scale = Math.min(1, 960 / longest);
           canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
           canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
           canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
           URL.revokeObjectURL(local);
-          canvas.toBlob(function (blob) { resolve(blob || file); }, "image/jpeg", 0.72);
+          canvas.toBlob(function (blob) { resolve(blob || file); }, "image/jpeg", 0.62);
         };
         img.onerror = function () { URL.revokeObjectURL(local); resolve(file); };
         img.src = local;
@@ -3064,11 +3716,45 @@
         status.textContent = err && err.message === "big" ? "הקובץ גדול מדי" : "לא הצלחנו לשלוח";
       }).then(function () { sending = false; });
     }
+    function sendText(raw) {
+      var text = String(raw || "").replace(/^\s+|\s+$/g, "");
+      var chatId = window.__vcomOpenChat;
+      var user = currentUser();
+      if (!chatId || !user || !text || sending) return;
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.doc || !fs.setDoc || !fs.getFirestore) {
+        status.textContent = "לא הצלחנו לשלוח";
+        return;
+      }
+      sending = true;
+      status.textContent = "";
+      var db = fs.getFirestore();
+      var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
+      var messageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      fs.setDoc(fs.doc(db, "chats", chatId, "messages", messageId), {
+        senderId: user.uid,
+        text: text,
+        type: "text",
+        createdAt: when
+      }).then(function () {
+        return fs.updateDoc(fs.doc(db, "chats", chatId), {
+          lastMessage: text.slice(0, 80),
+          lastMessageAt: when,
+          updatedAt: when,
+          lastSenderId: user.uid
+        }).catch(function () {});
+      }).then(function () {
+        status.textContent = "";
+      }).catch(function () {
+        status.textContent = "לא הצלחנו לשלוח";
+      }).then(function () { sending = false; });
+    }
     function takeFile(input, kind) {
       input.value = "";
       input.onchange = function () {
         var file = input.files && input.files[0];
-        if (file) sendFile(file, kind);
+        if (!file) return;
+        sendFile(file, typeof kind === "function" ? kind(file) : kind);
       };
       input.click();
     }
@@ -3129,9 +3815,26 @@
     mic.addEventListener("pointerdown", beginHold);
     mic.addEventListener("pointerup", endHold);
     mic.addEventListener("pointercancel", endHold);
-    root.querySelector("[data-camera]").addEventListener("click", function () { takeFile(camera, "image"); });
-    root.querySelector("[data-gallery]").addEventListener("click", function () { takeFile(gallery, "image"); });
-    root.querySelector("[data-video]").addEventListener("click", function () { takeFile(video, "video"); });
+    plus.addEventListener("click", function (event) {
+      event.preventDefault();
+      sheet.hidden = !sheet.hidden;
+    });
+    root.querySelector("[data-gallery]").addEventListener("click", function () {
+      sheet.hidden = true;
+      takeFile(gallery, "image");
+    });
+    root.querySelector("[data-capture]").addEventListener("click", function () {
+      sheet.hidden = true;
+      takeFile(camera, function (file) {
+        return String(file.type || "").indexOf("video/") === 0 ? "video" : "image";
+      });
+    });
+    document.addEventListener("pointerdown", function (event) {
+      if (sheet.hidden) return;
+      var target = event.target;
+      if (target && target.closest && (target.closest("#vcom-chat-sheet") || target.closest("[data-plus]"))) return;
+      sheet.hidden = true;
+    }, true);
     var pressTimer = 0;
     thread.addEventListener("pointerdown", function (event) {
       var bubble = event.target.closest && event.target.closest(".vcom-bubble");
@@ -3171,13 +3874,242 @@
       paint();
     });
     player.addEventListener("ended", function () { playingId = ""; paint(); });
+    function composerLabels() {
+      var host = document.querySelector("flt-semantics-host");
+      if (!host || !host.querySelectorAll) return null;
+      var seen = host.querySelectorAll("[role='button'], [data-semantics-role='text-field'], [aria-label]");
+      var real = false;
+      for (var n = 0; n < seen.length; n++) {
+        var name = seen[n].getAttribute ? (seen[n].getAttribute("aria-label") || "") : "";
+        if (name === "Enable accessibility") continue;
+        real = true;
+        break;
+      }
+      if (!real) return null;
+      var nodes = host.querySelectorAll("[aria-label='הודעה'], [data-semantics-role='text-field']");
+      var labels = [];
+      var view = window.innerHeight || 0;
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+        var visible = !!(rect && rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.top < view);
+        if (visible && rect && typeof document.elementFromPoint === "function") {
+          var hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 12));
+          var other = hit && hit.closest && hit.closest("flt-semantics");
+          if (other && other !== node && !(node.contains && node.contains(other)) && !(other.contains && other.contains(node))) visible = false;
+        }
+        var role = node.getAttribute ? (node.getAttribute("role") || "") : "";
+        if (node.getAttribute && node.getAttribute("data-semantics-role") === "text-field") role = "textbox";
+        labels.push({
+          label: node.getAttribute ? (node.getAttribute("aria-label") || node.getAttribute("placeholder") || "") : "",
+          role: role,
+          visible: visible,
+          bottom: !!(visible && rect && rect.top > view * 0.5)
+        });
+      }
+      return labels;
+    }
+    function showGroup(id, name, count) {
+      window.__vcomGroupId = id;
+      window.__vcomGroupName = name || "Chatcom";
+      window.__vcomOpenChat = id;
+      window.__vcomChatTab = window.__vcomTab | 0;
+      if (groupName) groupName.textContent = window.__vcomGroupName;
+      if (groupMeta) groupMeta.textContent = count ? (count + " משתתפים") : "";
+      root.classList.add("group");
+      if (groupHead) groupHead.hidden = false;
+      if (groupCompose) groupCompose.hidden = false;
+      root.hidden = false;
+      sheet.hidden = true;
+      watch(id);
+    }
+    function closeGroup() {
+      var id = window.__vcomGroupId || "";
+      window.__vcomGroupId = "";
+      window.__vcomGroupName = "";
+      if (id && window.__vcomOpenChat === id) window.__vcomOpenChat = "";
+      root.classList.remove("group");
+      if (groupHead) groupHead.hidden = true;
+      if (groupCompose) groupCompose.hidden = true;
+      if (groupText) groupText.value = "";
+      sheet.hidden = true;
+      root.hidden = true;
+      if (hold) endHold();
+      if (watched) watch("");
+    }
+    if (root.querySelector("[data-group-back]")) {
+      root.querySelector("[data-group-back]").addEventListener("click", closeGroup);
+    }
+    if (root.querySelector("[data-group-send]")) {
+      root.querySelector("[data-group-send]").addEventListener("click", function () {
+        sendText(groupText && groupText.value);
+        if (groupText) groupText.value = "";
+      });
+    }
+    if (groupText) {
+      groupText.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        sendText(groupText.value);
+        groupText.value = "";
+      });
+    }
+    var picker = document.createElement("section");
+    picker.id = "vcom-chatcom-new";
+    picker.hidden = true;
+    picker.innerHTML = '<header><button type="button" data-close aria-label="סגירה">→</button><b>Chatcom</b></header><input id="vcom-group-title" maxlength="40" placeholder="שם הקבוצה"><div id="vcom-group-contacts"></div><p data-group-error></p><button type="button" data-create>פתיחת צ\'אט</button>';
+    document.body.appendChild(picker);
+    var pickerError = picker.querySelector("[data-group-error]");
+    var pickerList = picker.querySelector("#vcom-group-contacts");
+    var pickerTitle = picker.querySelector("#vcom-group-title");
+    function linePhone(value) {
+      var d = String(value || "").replace(/\D/g, "");
+      if (/^020\d{6}$/.test(d)) return d;
+      if (/^20\d{6}$/.test(d)) return "0" + d;
+      return "";
+    }
+    function loadContacts() {
+      if (pickerList) pickerList.replaceChildren();
+      if (pickerError) pickerError.textContent = "";
+      var fs = window.firebase_firestore;
+      var user = currentUser();
+      if (!fs || !user || !fs.getDocs || !fs.collection || !fs.getFirestore) {
+        if (pickerError) pickerError.textContent = "לא הצלחנו לטעון אנשי קשר";
+        return;
+      }
+      fs.getDocs(fs.collection(fs.getFirestore(), "users", user.uid, "contacts")).then(function (snap) {
+        var docs = snap && snap.docs ? snap.docs : [];
+        if (!docs.length) {
+          if (pickerError) pickerError.textContent = "אין אנשי קשר";
+          return;
+        }
+        docs.forEach(function (docSnap) {
+          var data = docSnap.data ? docSnap.data() : {};
+          var phone = linePhone(data && data.phoneNumber);
+          if (!phone) return;
+          var row = document.createElement("label");
+          var box = document.createElement("input");
+          box.type = "checkbox";
+          box.dataset.phone = phone;
+          box.dataset.person = data && data.name || phone;
+          var caption = document.createElement("span");
+          caption.textContent = (data && data.name || phone) + "  " + phone;
+          row.appendChild(box);
+          row.appendChild(caption);
+          pickerList.appendChild(row);
+        });
+        if (!pickerList.childNodes.length && pickerError) pickerError.textContent = "אין אנשי קשר";
+      }).catch(function () {
+        if (pickerError) pickerError.textContent = "לא הצלחנו לטעון אנשי קשר";
+      });
+    }
+    function memberUser(fs, db, phone) {
+      return fs.getDoc(fs.doc(db, "phoneNumbers", phone)).then(function (snap) {
+        var data = snap && snap.exists && snap.exists() && snap.data ? snap.data() : null;
+        return data && data.userId || "";
+      }).catch(function () { return ""; });
+    }
+    function createGroup() {
+      var name = pickerTitle ? String(pickerTitle.value || "").replace(/^\s+|\s+$/g, "") : "";
+      if (!name) {
+        if (pickerError) pickerError.textContent = "נא לרשום שם לקבוצה";
+        return;
+      }
+      var chosen = [];
+      var boxes = pickerList ? pickerList.querySelectorAll("input") : [];
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].checked) chosen.push({ phone: boxes[i].dataset.phone, name: boxes[i].dataset.person || boxes[i].dataset.phone });
+      }
+      if (!chosen.length) {
+        if (pickerError) pickerError.textContent = "נא לבחור אנשי קשר";
+        return;
+      }
+      var fs = window.firebase_firestore;
+      var user = currentUser();
+      if (!fs || !user || !fs.getDoc || !fs.setDoc) {
+        if (pickerError) pickerError.textContent = "לא הצלחנו לפתוח את הקבוצה";
+        return;
+      }
+      if (pickerError) pickerError.textContent = "";
+      var db = fs.getFirestore();
+      Promise.all(chosen.map(function (person) {
+        return memberUser(fs, db, person.phone).then(function (uid) {
+          return { phone: person.phone, name: person.name, uid: uid };
+        });
+      })).then(function (people) {
+        var ids = [user.uid];
+        var phones = {};
+        var names = {};
+        people.forEach(function (person) {
+          if (!person.uid || person.uid === user.uid || ids.indexOf(person.uid) >= 0) return;
+          ids.push(person.uid);
+          phones[person.uid] = person.phone;
+          names[person.uid] = name;
+        });
+        if (ids.length < 2) throw new Error("missing");
+        ids.sort();
+        names[user.uid] = name;
+        var id = "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        var when = fs.serverTimestamp ? fs.serverTimestamp() : new Date();
+        return fs.setDoc(fs.doc(db, "chats", id), {
+          participantIds: ids,
+          participantPhones: phones,
+          peerNames: names,
+          groupName: name,
+          isGroup: true,
+          lastMessage: name,
+          lastMessageAt: when,
+          updatedAt: when,
+          createdAt: when,
+          lastSenderId: user.uid
+        }).then(function () {
+          return { id: id, name: name, count: ids.length };
+        });
+      }).then(function (group) {
+        picker.hidden = true;
+        if (pickerTitle) pickerTitle.value = "";
+        showGroup(group.id, group.name, group.count);
+      }).catch(function () {
+        if (pickerError) pickerError.textContent = "לא נמצא מנוי ברשימה";
+      });
+    }
+    if (picker.querySelector("[data-close]")) picker.querySelector("[data-close]").addEventListener("click", function () { picker.hidden = true; });
+    if (picker.querySelector("[data-create]")) picker.querySelector("[data-create]").addEventListener("click", createGroup);
+    window.vcomOpenChatcom = function () {
+      if (window.vcomCloseSideMenu) window.vcomCloseSideMenu();
+      if (pickerTitle) pickerTitle.value = "";
+      picker.hidden = false;
+      loadContacts();
+    };
     setInterval(function () {
-      var open = chatOpen();
+      if (document.hidden) return;
+      var grouped = !!window.__vcomGroupId;
+      var composer = grouped ? null : window.vcomComposerOnScreen(composerLabels());
+      var now = Date.now();
+      if (composer === true) window.__vcomComposerAt = now;
+      var open = window.vcomChatOverlayOpen(chatOpen(), grouped, composer, window.__vcomComposerAt || 0, now);
+      var buttons = window.vcomChatButtonsOpen(open, grouped ? true : composer, window.__vcomComposerAt || 0, now);
+      root.classList.toggle("vcom-composer-away", !buttons);
+      root.classList.toggle("group", grouped);
+      if (groupHead) groupHead.hidden = !grouped;
+      if (groupCompose) groupCompose.hidden = !grouped;
+      if (grouped && groupName) groupName.textContent = window.__vcomGroupName || "Chatcom";
       root.hidden = !open;
-      if (!open && hold) endHold();
-      var id = open ? window.__vcomOpenChat : "";
+      if (!open && !grouped && composer === false) window.__vcomOpenChat = "";
+      if (window.vcomSyncHeaderLogo) window.vcomSyncHeaderLogo();
+      if (!open) {
+        sheet.hidden = true;
+        if (hold) endHold();
+        if (playingId) {
+          playingId = "";
+          try { player.pause(); } catch (ePause) {}
+        }
+        if (watched) watch("");
+        return;
+      }
+      var id = grouped ? window.__vcomGroupId : (window.__vcomOpenChat || "");
       if (id !== watched) watch(id);
-    }, 400);
+    }, 300);
   }
   function issuerCss() {
     return ""
@@ -3186,10 +4118,15 @@
       + "#vcom-link-menu[hidden],#vcom-link-form[hidden],#vcom-link-banner[hidden],#vcom-dial-paste[hidden],#vcom-menu-logo[hidden]{display:none!important}"
       + "#vcom-dial-paste{position:fixed;z-index:30;top:calc(env(safe-area-inset-top,0px) + 44px);left:50%;transform:translateX(-50%);width:min(280px,78vw);height:68px;border:0;border-radius:0;outline:none;box-shadow:none;background:transparent;color:transparent;caret-color:transparent;-webkit-appearance:none;appearance:none;font-size:16px;text-align:center}"
       + "#vcom-dial-paste:focus{outline:none;box-shadow:none;border:0}"
-      + "#vcom-link-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:12px 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right;font:600 17px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + ".vcom-link-open-icon{width:22px;height:22px;flex:0 0 22px;display:grid;place-items:center;color:#1C1C1E}"
-      + ".vcom-link-open-icon svg{display:block}"
-      + ".vcom-link-open-text{font-weight:600}"
+      + "#vcom-header-logo{position:fixed;z-index:86;top:calc(env(safe-area-inset-top,0px) + 16px);display:flex;direction:ltr;align-items:baseline;pointer-events:none;font:700 22px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-header-logo .v{color:#34C759}#vcom-header-logo .com{color:#007AFF}"
+      + "#vcom-header-logo[hidden]{display:none!important}"
+      + "#vcom-link-open,#vcom-chatcom,#vcom-account-open{display:flex;flex-direction:row;direction:rtl;align-items:center;justify-content:flex-start;gap:12px;width:100%;min-height:48px;box-sizing:border-box;margin:0;padding:0 2px;border:0;border-radius:0;background:transparent;color:#1C1C1E;text-align:right}"
+      + "#vcom-link-open{font:600 17px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E}"
+      + "#vcom-chatcom,#vcom-account-open{font:600 17px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + ".vcom-link-open-icon{width:24px;height:24px;flex:0 0 24px;display:grid;place-items:center;color:#1C1C1E}"
+      + ".vcom-link-open-icon svg{display:block;width:24px;height:24px}"
+      + ".vcom-link-open-text{font-weight:600;font-size:17px;line-height:1.2}"
       + "#vcom-link-form{display:flex;flex-direction:column;gap:8px;margin:0}"
       + "#vcom-link-name{width:100%;box-sizing:border-box;border:1px solid #E5E5EA;border-radius:12px;background:#fff;color:#1C1C1E;padding:12px 14px;font:16px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
       + ".vcom-link-error{min-height:18px;margin:0;color:#C62828;font-size:13px;text-align:right}"
@@ -3203,22 +4140,61 @@
       + "#vcom-guest-local-video{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:8px;width:min(168px,40vw);height:min(292px,36vh);object-fit:cover;object-position:center;border-radius:24px;z-index:10021;background:#111;transform:scaleX(-1);pointer-events:none}"
       + "#vcom-guest-remote-video[hidden],#vcom-guest-local-video[hidden]{display:none!important}"
       + "#vcom-chat-media[hidden]{display:none!important}"
-      + "#vcom-chat-thread{position:fixed;z-index:36;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 72px);bottom:calc(env(safe-area-inset-bottom,0px) + 118px);overflow:auto;background:#F2F2F7;padding:12px 10px 8px;box-sizing:border-box}"
-      + ".vcom-bubble{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;margin:0 0 8px auto;background:#fff;color:#1C1C1E;border-radius:16px 16px 4px 16px;padding:6px;position:relative}"
+      + "#vcom-chat-media.vcom-composer-away #vcom-chat-plus,#vcom-chat-media.vcom-composer-away #vcom-chat-mic,#vcom-chat-media.vcom-composer-away #vcom-chat-sheet,#vcom-chat-media.vcom-composer-away #vcom-chat-rec{display:none!important}"
+      + "#vcom-chat-thread{position:fixed;z-index:36;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 72px);bottom:calc(env(safe-area-inset-bottom,0px) + 78px);overflow:auto;background:#F2F2F7;padding:12px 10px 8px;box-sizing:border-box}"
+      + ".vcom-bubble{display:flex;flex-direction:column;align-items:flex-start;max-width:78%;margin:0 0 8px auto;background:#fff;color:#1C1C1E;border-radius:16px 16px 4px 16px;padding:6px;position:relative;content-visibility:auto;contain-intrinsic-size:72px}"
       + ".vcom-bubble.mine{margin:0 auto 8px 0;background:#007AFF;color:#fff;border-radius:16px 16px 16px 4px}"
+      + ".vcom-bubble.plain,.vcom-bubble.plain.mine{background:transparent;padding:0;box-shadow:none}"
       + ".vcom-bubble p{margin:0;padding:4px 8px;font:16px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;white-space:pre-wrap;word-break:break-word;direction:rtl}"
-      + ".vcom-bubble img,.vcom-bubble video{display:block;width:min(240px,68vw);max-height:280px;object-fit:cover;border-radius:12px;background:#111}"
+      + ".vcom-bubble img,.vcom-bubble video{display:block;width:min(240px,68vw);height:auto;max-height:320px;object-fit:contain;border-radius:14px;background:transparent}"
+      + ".vcom-bubble.plain time{color:#8E8E93;opacity:1}"
       + ".vcom-voice{min-height:44px;border:0;border-radius:12px;background:transparent;color:inherit;font:600 16px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:8px 12px}"
       + ".vcom-bubble time{align-self:flex-end;opacity:.75;font-size:11px;padding:2px 6px 0}"
-      + ".vcom-bubble [data-delete]{display:none;position:absolute;top:-18px;left:8px;border:0;border-radius:10px;background:#FF3B30;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:32px;padding:0 10px}"
+      + ".vcom-bubble [data-delete]{display:none;position:absolute;top:8px;left:8px;z-index:3;border:0;border-radius:10px;background:#FF3B30;color:#fff;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:32px;padding:0 10px;box-shadow:0 1px 4px rgba(0,0,0,.25)}"
       + ".vcom-bubble.ask [data-delete]{display:block}"
-      + "#vcom-chat-tools{position:fixed;z-index:37;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 64px);display:flex;justify-content:flex-end;gap:8px}"
-      + "#vcom-chat-tools button{min-height:34px;border:0;border-radius:17px;background:#007AFF;color:#fff;padding:0 12px;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
-      + "#vcom-chat-mic{position:fixed;z-index:38;left:54px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:46px;height:46px;border:0;border-radius:50%;background:#007AFF;color:#fff;font:700 11px/1.1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;touch-action:none}"
+      + "#vcom-chat-plus{position:fixed;z-index:38;left:56px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:42px;height:42px;border:1px solid #E5E5EA;border-radius:50%;background:#fff;color:#3A3A3C;font:500 28px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.06)}"
+      + "#vcom-chat-sheet{position:fixed;z-index:39;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 60px);display:flex;flex-direction:column;min-width:220px;background:#fff;border:1px solid #E5E5EA;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.12);overflow:hidden;direction:rtl}"
+      + "#vcom-chat-sheet[hidden]{display:none!important}"
+      + "#vcom-chat-sheet button{min-height:48px;border:0;border-bottom:1px solid #F2F2F7;background:#fff;color:#1C1C1E;text-align:right;padding:12px 16px;font:600 15px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chat-sheet button:last-child{border-bottom:0}"
+      + "#vcom-chat-mic{position:fixed;z-index:38;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);width:42px;height:42px;border:0;border-radius:50%;background:#007AFF;color:#fff;display:grid;place-items:center;padding:0;touch-action:none}"
+      + "#vcom-chat-mic svg{display:block}"
       + "#vcom-chat-mic.rec{background:#FF3B30}"
-      + "#vcom-chat-rec{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);margin:0;color:#FF3B30;font:600 15px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right}"
+      + "#vcom-chat-rec{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);margin:0;color:#FF3B30;font:600 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:right;pointer-events:none}"
       + "#vcom-chat-rec[hidden]{display:none!important}"
-      + "#vcom-chat-media-status{position:fixed;z-index:38;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 102px);margin:0;color:#C62828;font-size:13px;text-align:right}";
+      + "#vcom-chat-media-status{position:fixed;z-index:38;left:108px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 58px);margin:0;color:#C62828;font-size:13px;text-align:center;pointer-events:none}"
+      + "#vcom-group-head{position:fixed;z-index:40;left:0;right:0;top:0;height:calc(env(safe-area-inset-top,0px) + 56px);padding:env(safe-area-inset-top,0px) 8px 0;box-sizing:border-box;background:#fff;display:flex;direction:rtl;align-items:flex-end;gap:8px;border-bottom:1px solid #E5E5EA}"
+      + "#vcom-group-head[hidden],#vcom-group-compose[hidden]{display:none!important}"
+      + "#vcom-group-head button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
+      + "#vcom-group-head strong{display:block;color:#1C1C1E;font-size:17px}"
+      + "#vcom-group-head small{display:block;color:#8E8E93;font-size:12px}"
+      + "#vcom-chat-media.group #vcom-chat-thread{top:calc(env(safe-area-inset-top,0px) + 56px);bottom:calc(env(safe-area-inset-bottom,0px) + 72px)}"
+      + "#vcom-group-compose{position:fixed;z-index:38;left:108px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);height:46px;display:flex;direction:ltr;align-items:center;gap:6px}"
+      + "#vcom-group-compose button{width:40px;height:40px;border:0;border-radius:50%;background:#007AFF;color:#fff;font-size:18px}"
+      + "#vcom-group-text{flex:1;height:40px;border:0;border-radius:20px;background:#fff;padding:0 14px;font:16px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;direction:rtl}"
+      + "#vcom-chatcom-new{position:fixed;z-index:92;inset:0;background:#F2F2F7;direction:rtl;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top,0px) + 8px) 16px calc(env(safe-area-inset-bottom,0px) + 16px);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-chatcom-new[hidden]{display:none!important}"
+      + "#vcom-chatcom-new header{display:flex;align-items:center;gap:8px;min-height:48px}"
+      + "#vcom-chatcom-new header button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
+      + "#vcom-chatcom-new header b{font-size:20px;font-weight:600}"
+      + "#vcom-group-title{height:48px;border:0;border-radius:12px;background:#fff;padding:0 14px;font-size:16px}"
+      + "#vcom-group-contacts{flex:1;overflow:auto;margin:12px 0;display:flex;flex-direction:column;gap:8px}"
+      + "#vcom-group-contacts label{display:flex;align-items:center;gap:10px;background:#fff;border-radius:12px;padding:12px;font-size:16px}"
+      + "#vcom-chatcom-new [data-group-error]{min-height:20px;margin:0 0 8px;color:#C62828;font-size:14px}"
+      + "#vcom-chatcom-new [data-create]{min-height:48px;border:0;border-radius:12px;background:#007AFF;color:#fff;font:600 17px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}"
+      + "#vcom-account{position:fixed;inset:0;z-index:93;background:#F2F2F7;direction:rtl;display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top,0px) + 8px) 16px calc(env(safe-area-inset-bottom,0px) + 20px);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1C1E;overflow:auto}"
+      + "#vcom-account[hidden]{display:none!important}"
+      + "#vcom-account header{display:flex;align-items:center;gap:8px;min-height:48px}"
+      + "#vcom-account header button{width:44px;height:44px;border:0;background:transparent;color:#007AFF;font-size:22px}"
+      + "#vcom-account header b{font-size:20px;font-weight:700}"
+      + ".vcom-current{min-height:22px;margin:18px 0 14px;color:#3A3A3C;font-size:15px;font-weight:600}"
+      + ".vcom-plan{display:flex;align-items:center;gap:12px;width:100%;text-align:right;background:#fff;border:2px solid transparent;border-radius:18px;padding:14px;margin:0 0 10px;box-shadow:0 8px 18px rgba(28,39,61,.05)}"
+      + ".vcom-plan.on{border-color:#007AFF}"
+      + ".vcom-plan.wait{border-color:#FFCC00}"
+      + ".vcom-plan img{width:44px;height:44px;object-fit:contain;flex:0 0 44px}"
+      + ".vcom-plan strong{display:block;font-size:17px;letter-spacing:.2px}"
+      + ".vcom-plan small{display:block;margin-top:4px;color:#8E8E93;font-size:13px;font-weight:500}"
+      + "#vcom-account [data-status]{min-height:20px;margin:0;color:#C62828;font-size:14px}";
   }
   function guestCss() {
     return ""
@@ -3263,6 +4239,95 @@
       + ".guest-join .v{color:#34C759;font-weight:800}"
       + ".guest-join .com{color:#007AFF;font-weight:800}";
   }
+  function installIncomingScreen() {
+    if (guestCode || installIncomingScreen.started) return;
+    installIncomingScreen.started = true;
+    var style = document.createElement("style");
+    style.textContent = "#vcom-incoming-screen{position:fixed;inset:0;z-index:2147483646;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#F4F7FB;color:#1C1C1E;text-align:center;padding:24px}#vcom-incoming-screen[hidden]{display:none!important}#vcom-incoming-screen h2{margin:18px 0 0;font-size:34px;font-weight:700}#vcom-incoming-screen p{margin:8px 0 0;color:#8E8E93;font-size:20px}#vcom-incoming-screen .phone{direction:ltr;font-size:28px;font-weight:700;color:#1C1C1E}#vcom-incoming-screen .actions{display:flex;gap:28px;margin-top:36px}#vcom-incoming-screen button{width:84px;height:84px;border:0;border-radius:50%;color:#fff;font-size:16px;font-weight:700}#vcom-incoming-screen .answer{background:#34C759}#vcom-incoming-screen .decline{background:#FF3B30}";
+    document.head.appendChild(style);
+    var root = document.createElement("div");
+    root.id = "vcom-incoming-screen";
+    root.hidden = true;
+    root.innerHTML = '<img src="/icons/vcom-splash.png?v=call11" alt="" width="96" height="96"><h2 data-title>שיחה נכנסת</h2><p class="phone" data-phone></p><div class="actions"><button type="button" class="decline" data-decline>דחה</button><button type="button" class="answer" data-answer>ענה</button></div>';
+    document.body.appendChild(root);
+    var title = root.querySelector("[data-title]");
+    var phone = root.querySelector("[data-phone]");
+    var currentId = "";
+    function hide() {
+      currentId = "";
+      root.hidden = true;
+    }
+    function show(id, data) {
+      data = data || {};
+      currentId = id;
+      title.textContent = data.isVideoCall === true ? "שיחת וידאו נכנסת" : "שיחה נכנסת";
+      phone.textContent = pretty(data.callerPhoneNumber || data.callerPhone || "");
+      root.hidden = false;
+      document.body.appendChild(root);
+      if (window.vcomCloseSideMenu) window.vcomCloseSideMenu();
+      if (window.__vcomShowIncoming && window.__vcomUid) window.__vcomShowIncoming(window.__vcomUid, data, id);
+    }
+    root.querySelector("[data-answer]").addEventListener("click", function () {
+      var id = currentId;
+      if (window.__vcomShowIncoming && window.__vcomUid && id) {
+        window.__vcomShowIncoming(window.__vcomUid, { callerPhoneNumber: phone.textContent, isVideoCall: title.textContent.indexOf("וידאו") >= 0 }, id);
+      }
+      if (window.__vcomAnswer) window.__vcomAnswer();
+      hide();
+    });
+    root.querySelector("[data-decline]").addEventListener("click", function () {
+      if (window.__vcomDecline) window.__vcomDecline();
+      hide();
+    });
+    window.vcomIncomingStillLive = function (data, now) {
+      now = now == null ? Date.now() : now;
+      if (!data || data.status !== "ringing") return false;
+      var created = asMillis(data.createdAt) || asMillis(data.ringingStartedAt) || asMillis(data.waitingStartedAt);
+      if (!created) return true;
+      return now - created < 60000;
+    };
+    function bind(uid) {
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.collection || !fs.query || !fs.where || !fs.orderBy || !fs.limit || !fs.onSnapshot || !fs.getFirestore) return false;
+      if (bind.uid === uid && bind.unsub) return true;
+      if (bind.unsub) { try { bind.unsub(); } catch (e) {} bind.unsub = null; }
+      bind.uid = uid;
+      var db;
+      try { db = fs.getFirestore(); } catch (eDb) { return false; }
+      var calls = fs.query(
+        fs.collection(db, "calls"),
+        fs.where("calleeId", "==", uid),
+        fs.where("status", "==", "ringing"),
+        fs.orderBy("createdAt", "desc"),
+        fs.limit(1)
+      );
+      bind.unsub = fs.onSnapshot(calls, function (snap) {
+        var doc = snap && snap.docs && snap.docs[0];
+        if (!doc) { hide(); return; }
+        var data = doc.data ? doc.data() : {};
+        if (!window.vcomIncomingStillLive(data)) { hide(); return; }
+        if (currentId !== doc.id || root.hidden) show(doc.id, data);
+      }, function () {
+        if (bind.unsub) { try { bind.unsub(); } catch (eUn) {} bind.unsub = null; }
+        setTimeout(function () { bind(uid); }, 3000);
+      });
+      return true;
+    }
+    setInterval(function () {
+      var uid = window.__vcomUid || "";
+      if (!uid) {
+        if (bind.unsub) {
+          try { bind.unsub(); } catch (e) {}
+          bind.unsub = null;
+          bind.uid = "";
+        }
+        hide();
+        return;
+      }
+      bind(uid);
+    }, 2000);
+  }
+  installIncomingScreen();
   function guestHtml() {
     return ''
       + '<section class="guest-wait" data-view="wait"><img src="/icons/vcom-splash.png?v=call11" alt="VCOM"><h1>VCOM</h1><p>המתן לשיחה</p></section>'
