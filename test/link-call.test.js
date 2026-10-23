@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid22"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid23"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -786,6 +786,8 @@ test("a real phone with no VCOM line opens in the caller's WhatsApp", function (
   assert.equal(w.vcomDialKind("020-578412"), "vcom");
   assert.equal(w.vcomWhatsAppPhone("020578412"), "");
   assert.equal(w.vcomDialKind("0521234567"), "whatsapp");
+  assert.equal(w.vcomCallButtonReady("0521234567"), true);
+  assert.equal(w.vcomCallButtonReady("020578412"), false);
   assert.equal(w.vcomWhatsAppPhone("052-123-4567"), "972521234567");
   assert.equal(w.vcomWhatsAppCallUrl("+972 52-123-4567"), "whatsapp://call?phone=972521234567");
   assert.equal(w.vcomWhatsAppChatUrl("00972521234567"), "https://wa.me/972521234567");
@@ -793,7 +795,7 @@ test("a real phone with no VCOM line opens in the caller's WhatsApp", function (
   assert.equal(w.vcomDialKind("0521234"), "invalid");
   assert.equal(w.vcomDialKind(""), "invalid");
   assert.equal(w.vcomOpenWhatsAppCall("0521234567"), true);
-  assert.equal(w.location.href, "whatsapp://call?phone=972521234567");
+  assert.equal(w.__vcomWhatsAppOpened, "whatsapp://call?phone=972521234567");
   clearTimeout(w.__vcomWhatsAppTimer);
   assert.equal(w.vcomOpenWhatsAppCall("020578412"), false);
 });

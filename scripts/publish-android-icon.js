@@ -155,7 +155,7 @@ function once(html, from, to, label) {
 }
 
 function patchedIndex(html) {
-  return once(html, "link.js?v=vid21", "link.js?v=vid22", "link.js cache query");
+  return once(html, "link.js?v=vid22", "link.js?v=vid23", "link.js cache query");
 }
 
 function patchedDial(src) {
@@ -172,8 +172,11 @@ function patchedDial(src) {
   }
   const gate = 'if(!p.c.gz8()){o=p.c.lp("\\u05d4\\u05d6\\u05df \\u05de\\u05e1\\u05e4\\u05e8 \\u05d8\\u05dc\\u05e4\\u05d5\\u05df \\u05de\\u05dc\\u05d0 (020XXXXXX).",B.iF)';
   const handoff = 'if(window.vcomDialKind&&window.vcomDialKind(p.c.c)==="whatsapp"){if(window.vcomOpenWhatsAppCall)window.vcomOpenWhatsAppCall(p.c.c);s=1;break}if(!p.c.gz8()){o=p.c.lp("\\u05d4\\u05d6\\u05df \\u05de\\u05e1\\u05e4\\u05e8 VCOM \\u05de\\u05dc\\u05d0 \\u05d0\\u05d5 \\u05de\\u05e1\\u05e4\\u05e8 \\u05d8\\u05dc\\u05e4\\u05d5\\u05df \\u05d0\\u05de\\u05d9\\u05ea\\u05d9.",B.iF)';
-  if (next.includes('window.vcomDialKind(p.c.c)==="whatsapp"')) return next;
-  return once(next, gate, handoff, "dial gate");
+  if (!next.includes('window.vcomDialKind(p.c.c)==="whatsapp"')) next = once(next, gate, handoff, "dial gate");
+  const blocked = "if(!A.azj(q))return!1";
+  const opened = 'if(!(A.azj(q)||(window.vcomCallButtonReady&&window.vcomCallButtonReady(q))))return!1';
+  if (!next.includes(opened)) next = once(next, blocked, opened, "call button");
+  return next;
 }
 
 async function linkBody() {
@@ -263,7 +266,7 @@ async function main() {
     config,
   });
   await api(token, "POST", "/sites/" + SITE + "/channels/live/releases?versionName=" + encodeURIComponent(created.name), {
-    message: "Open a real phone number in WhatsApp when it is not a VCOM line",
+    message: "Enable the keypad call button for a real phone number",
   });
   console.log("Published WhatsApp fallback to https://" + SITE + ".web.app/");
 }
