@@ -33,6 +33,54 @@
     appId: "1:307204199533:web:bc64335c5b3ab8ef289b64"
   };
 
+  // Subscriber dialing lives in the compiled app. The caller gives up after
+  // B.rk (20s). A call also waits on vcomRace for up to 8s before it is sent
+  // when the previous lock is not a live future. Keep the ring for a full
+  // minute, and send as soon as there is nothing real to wait for.
+  var CALL_RING_US = 6e7;
+  var OLD_RACE = "A.vcomRace=function(fut,ms){var zone=$.ad,comp=new A.bi(new A.au(zone,t.U),t.R),done=!1\nfunction finish(){if(done)return\ndone=!0\nvar prev=$.ad\n$.ad=zone\ntry{J.b4x(comp)}catch(e){}finally{$.ad=prev}}\nif(fut&&typeof fut.a===\"number\"&&fut.a>3){finish()\nreturn comp.a}var left=ms\nfunction watch(){if(done)return\nif(fut&&typeof fut.a===\"number\"&&fut.a>3){finish()\nreturn}left-=200\nif(left>0)setTimeout(watch,200)\nelse finish()}setTimeout(watch,200)\nreturn comp.a}";
+  var NEW_RACE = "A.vcomRace=function(fut,ms){var zone=$.ad,comp=new A.bi(new A.au(zone,t.U),t.R),done=!1\nfunction finish(){if(done)return\ndone=!0\nvar prev=$.ad\n$.ad=zone\ntry{J.b4x(comp)}catch(e){}finally{$.ad=prev}}\nvar pending=!!(fut&&fut instanceof A.au&&typeof fut.a===\"number\"&&fut.a<=3)\nif(!pending){finish()\nreturn comp.a}var left=ms\nfunction watch(){if(done)return\nif(!(fut instanceof A.au)||typeof fut.a!==\"number\"||fut.a>3){finish()\nreturn}left-=50\nif(left>0)setTimeout(watch,50)\nelse finish()}watch()\nreturn comp.a}";
+  window.vcomCallRingMs = 60000;
+  window.vcomPatchCallBundle = function (source) {
+    var text = String(source || "");
+    var ring = "B.rk=new A.aU(2e7)";
+    var minute = "B.rk=new A.aU(" + CALL_RING_US + ")";
+    if (text.indexOf(ring) !== -1) text = text.split(ring).join(minute);
+    if (text.indexOf(OLD_RACE) !== -1) text = text.split(OLD_RACE).join(NEW_RACE);
+    return text;
+  };
+  function installCallBundlePatch() {
+    if (typeof HTMLScriptElement === "undefined") return;
+    var proto = HTMLScriptElement.prototype;
+    if (proto.__vcomCallPatch) return;
+    var desc = Object.getOwnPropertyDescriptor(proto, "src");
+    if (!desc || typeof desc.set !== "function" || typeof desc.get !== "function") return;
+    proto.__vcomCallPatch = true;
+    Object.defineProperty(proto, "src", {
+      configurable: true,
+      enumerable: desc.enumerable,
+      get: function () { return desc.get.call(this); },
+      set: function (value) {
+        var url = String(value == null ? "" : value);
+        if (this.__vcomBundle || url.indexOf("main.dart.js") === -1) {
+          desc.set.call(this, value);
+          return;
+        }
+        this.__vcomBundle = true;
+        var el = this;
+        var loadOriginal = function () { desc.set.call(el, value); };
+        var reader = (typeof fetch === "function") ? fetch(url, { cache: "no-store" }).then(function (res) { return res.text(); }) : Promise.reject(new Error("no-fetch"));
+        reader.then(function (text) {
+          var next = window.vcomPatchCallBundle(text);
+          if (!next || next === text) { loadOriginal(); return; }
+          var blob = new Blob([next], { type: "text/javascript" });
+          desc.set.call(el, URL.createObjectURL(blob));
+        }).catch(loadOriginal);
+      }
+    });
+  }
+  installCallBundlePatch();
+
   function digits(value) { return String(value || "").replace(/\D/g, ""); }
   function asMillis(value) {
     if (value == null || value === "") return 0;
