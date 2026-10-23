@@ -155,9 +155,25 @@ function once(html, from, to, label) {
 }
 
 function patchedIndex(html) {
-  let next = once(html, "manifest.json?v=vid19", "manifest.json?v=vid20", "manifest cache query");
-  next = once(next, "link.js?v=vid20", "link.js?v=vid21", "link.js cache query");
-  return next;
+  return once(html, "link.js?v=vid21", "link.js?v=vid22", "link.js cache query");
+}
+
+function patchedDial(src) {
+  const limit = [
+    ["if(r.length>=9)return", "if(r.length>=15)return"],
+    ["if(d.length>9)d=d.substring(0,9)", "if(d.length>15)d=d.substring(0,15)"],
+    ["p=q.length>9?B.c.ag(q,0,9):q", "p=q.length>15?B.c.ag(q,0,15):q"],
+    ["q=r.length>9?B.c.ag(r,0,9):r", "q=r.length>15?B.c.ag(r,0,15):r"],
+  ];
+  let next = src;
+  for (const pair of limit) {
+    if (next.includes(pair[1])) continue;
+    next = once(next, pair[0], pair[1], "dial length");
+  }
+  const gate = 'if(!p.c.gz8()){o=p.c.lp("\\u05d4\\u05d6\\u05df \\u05de\\u05e1\\u05e4\\u05e8 \\u05d8\\u05dc\\u05e4\\u05d5\\u05df \\u05de\\u05dc\\u05d0 (020XXXXXX).",B.iF)';
+  const handoff = 'if(window.vcomDialKind&&window.vcomDialKind(p.c.c)==="whatsapp"){if(window.vcomOpenWhatsAppCall)window.vcomOpenWhatsAppCall(p.c.c);s=1;break}if(!p.c.gz8()){o=p.c.lp("\\u05d4\\u05d6\\u05df \\u05de\\u05e1\\u05e4\\u05e8 VCOM \\u05de\\u05dc\\u05d0 \\u05d0\\u05d5 \\u05de\\u05e1\\u05e4\\u05e8 \\u05d8\\u05dc\\u05e4\\u05d5\\u05df \\u05d0\\u05de\\u05d9\\u05ea\\u05d9.",B.iF)';
+  if (next.includes('window.vcomDialKind(p.c.c)==="whatsapp"')) return next;
+  return once(next, gate, handoff, "dial gate");
 }
 
 async function linkBody() {
@@ -173,11 +189,12 @@ async function linkBody() {
 }
 
 function patchedBundle(buf) {
-  const src = buf.toString("utf8");
+  let src = buf.toString("utf8");
   const decline = "window.__vcomDecline=function(){q.C(0,B.Vy)}";
   const answer = "window.__vcomAnswer=function(){q.C(0,B.Vx)}";
-  if (src.includes(answer)) return Buffer.from(src, "utf8");
-  return Buffer.from(once(src, decline, decline + ";" + answer, "decline hook"), "utf8");
+  if (!src.includes(answer)) src = once(src, decline, decline + ";" + answer, "decline hook");
+  src = patchedDial(src);
+  return Buffer.from(src, "utf8");
 }
 
 async function main() {
@@ -246,9 +263,9 @@ async function main() {
     config,
   });
   await api(token, "POST", "/sites/" + SITE + "/channels/live/releases?versionName=" + encodeURIComponent(created.name), {
-    message: "Match the browser icon to iPhone and surface incoming calls and open links",
+    message: "Open a real phone number in WhatsApp when it is not a VCOM line",
   });
-  console.log("Published browser icon, incoming screen, and link status to https://" + SITE + ".web.app/");
+  console.log("Published WhatsApp fallback to https://" + SITE + ".web.app/");
 }
 
 main().catch((err) => fail(err && err.stack ? err.stack : String(err)));
