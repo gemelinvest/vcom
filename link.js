@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid23";
+  window.__VCOM_LINK_BUILD = "vid24";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -1385,7 +1385,7 @@
     return true;
   };
   window.vcomSessionNeedsWake = function (idleMs, sinceWakeMs) {
-    return (idleMs || 0) >= 15000 || (sinceWakeMs || 0) >= 1200000;
+    return (idleMs || 0) > 0 || (sinceWakeMs || 0) >= 1200000;
   };
   var sessionWakeAt = 0;
   var sessionHiddenAt = 0;
@@ -1405,19 +1405,16 @@
     if (sessionWaking || !window.vcomSessionNeedsWake(idle, now - sessionWakeAt)) return;
     sessionWaking = true;
     sessionWakeAt = now;
+    if (window.vcomRefreshIncoming) window.vcomRefreshIncoming();
     var jobs = [];
     try {
       var auth = window.firebase_auth;
       var user = auth && auth.getAuth ? auth.getAuth().currentUser : null;
-      if (user && user.getIdToken) jobs.push(Promise.resolve(user.getIdToken(true)).catch(function () {}));
+      if (idle >= 15000 && user && user.getIdToken) jobs.push(Promise.resolve(user.getIdToken(true)).catch(function () {}));
     } catch (eAuth) {}
     function kick(fs, db) {
-      if (!fs || !db) return;
-      var step = Promise.resolve();
-      if (!sessionOnCall() && fs.disableNetwork) step = Promise.resolve().then(function () { return fs.disableNetwork(db); }).catch(function () {});
-      jobs.push(step.then(function () {
-        if (fs.enableNetwork) return fs.enableNetwork(db);
-      }).catch(function () {}));
+      if (!fs || !db || !fs.enableNetwork) return;
+      jobs.push(Promise.resolve().then(function () { return fs.enableNetwork(db); }).catch(function () {}));
     }
     try {
       var fs = window.firebase_firestore;
@@ -1429,7 +1426,7 @@
       if (!sessionOnCall() && window.vcomRebindGuestBook) window.vcomRebindGuestBook();
       try {
         var bloc = window.__vcomBloc;
-        if (bloc && bloc.fy && !sessionOnCall() && now - (bloc.__vcomDialAt || 0) > 12000) {
+        if (bloc && bloc.fy && !sessionOnCall() && now - (bloc.__vcomDialAt || 0) > 3000) {
           bloc.fy = false;
           bloc.__vcomDialAt = 0;
         }
@@ -1440,6 +1437,7 @@
     if (document.visibilityState === "hidden") sessionHiddenAt = Date.now();
     else window.vcomWakeSession();
   });
+  window.addEventListener("focus", function () { window.vcomWakeSession(); });
   window.addEventListener("online", function () { window.vcomWakeSession(); });
   window.addEventListener("pageshow", function () { window.vcomWakeSession(); });
   setInterval(function () {
@@ -4304,12 +4302,16 @@
     var title = root.querySelector("[data-title]");
     var phone = root.querySelector("[data-phone]");
     var currentId = "";
+    var acting = false;
     function hide() {
       currentId = "";
+      acting = false;
       root.hidden = true;
     }
     function show(id, data) {
       data = data || {};
+      if (currentId === id && !root.hidden) return;
+      acting = false;
       currentId = id;
       title.textContent = data.isVideoCall === true ? "שיחת וידאו נכנסת" : "שיחה נכנסת";
       phone.textContent = pretty(data.callerPhoneNumber || data.callerPhone || "");
@@ -4319,14 +4321,14 @@
       if (window.__vcomShowIncoming && window.__vcomUid) window.__vcomShowIncoming(window.__vcomUid, data, id);
     }
     root.querySelector("[data-answer]").addEventListener("click", function () {
-      var id = currentId;
-      if (window.__vcomShowIncoming && window.__vcomUid && id) {
-        window.__vcomShowIncoming(window.__vcomUid, { callerPhoneNumber: phone.textContent, isVideoCall: title.textContent.indexOf("וידאו") >= 0 }, id);
-      }
+      if (acting || !currentId) return;
+      acting = true;
       if (window.__vcomAnswer) window.__vcomAnswer();
       hide();
     });
     root.querySelector("[data-decline]").addEventListener("click", function () {
+      if (acting || !currentId) return;
+      acting = true;
       if (window.__vcomDecline) window.__vcomDecline();
       hide();
     });
@@ -4337,34 +4339,49 @@
       if (!created) return true;
       return now - created < 60000;
     };
-    function bind(uid) {
-      var fs = window.firebase_firestore;
-      if (!fs || !fs.collection || !fs.query || !fs.where || !fs.orderBy || !fs.limit || !fs.onSnapshot || !fs.getFirestore) return false;
-      if (bind.uid === uid && bind.unsub) return true;
-      if (bind.unsub) { try { bind.unsub(); } catch (e) {} bind.unsub = null; }
-      bind.uid = uid;
-      var db;
-      try { db = fs.getFirestore(); } catch (eDb) { return false; }
-      var calls = fs.query(
+    function ringingQuery(fs, db, uid) {
+      return fs.query(
         fs.collection(db, "calls"),
         fs.where("calleeId", "==", uid),
         fs.where("status", "==", "ringing"),
         fs.orderBy("createdAt", "desc"),
         fs.limit(1)
       );
-      bind.unsub = fs.onSnapshot(calls, function (snap) {
-        var doc = snap && snap.docs && snap.docs[0];
-        if (!doc) { hide(); return; }
-        var data = doc.data ? doc.data() : {};
-        if (!window.vcomIncomingStillLive(data)) { hide(); return; }
-        if (currentId !== doc.id || root.hidden) show(doc.id, data);
-      }, function () {
+    }
+    function applySnap(snap) {
+      var doc = snap && snap.docs && snap.docs[0];
+      if (!doc) { hide(); return; }
+      var data = doc.data ? doc.data() : {};
+      if (!window.vcomIncomingStillLive(data)) { hide(); return; }
+      show(doc.id, data);
+    }
+    function bind(uid, force) {
+      var fs = window.firebase_firestore;
+      if (!fs || !fs.collection || !fs.query || !fs.where || !fs.orderBy || !fs.limit || !fs.onSnapshot || !fs.getFirestore) return false;
+      if (!force && bind.uid === uid && bind.unsub) return true;
+      if (bind.unsub) { try { bind.unsub(); } catch (e) {} bind.unsub = null; }
+      bind.uid = uid;
+      var db;
+      try { db = fs.getFirestore(); } catch (eDb) { return false; }
+      var calls = ringingQuery(fs, db, uid);
+      var read = fs.getDocsFromServer || fs.getDocs;
+      if (read) read(calls).then(applySnap).catch(function () {});
+      bind.unsub = fs.onSnapshot(calls, applySnap, function () {
         if (bind.unsub) { try { bind.unsub(); } catch (eUn) {} bind.unsub = null; }
-        setTimeout(function () { bind(uid); }, 3000);
+        setTimeout(function () { bind(uid, true); }, 800);
       });
       return true;
     }
-    setInterval(function () {
+    var refreshedAt = 0;
+    window.vcomRefreshIncoming = function () {
+      var uid = window.__vcomUid || "";
+      if (!uid) return false;
+      var at = Date.now();
+      if (at - refreshedAt < 400) return false;
+      refreshedAt = at;
+      return bind(uid, true);
+    };
+    function watchUid() {
       var uid = window.__vcomUid || "";
       if (!uid) {
         if (bind.unsub) {
@@ -4375,8 +4392,15 @@
         hide();
         return;
       }
-      bind(uid);
-    }, 2000);
+      bind(uid, false);
+    }
+    setInterval(watchUid, 2000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible") window.vcomRefreshIncoming();
+    });
+    window.addEventListener("pageshow", function () { window.vcomRefreshIncoming(); });
+    window.addEventListener("focus", function () { window.vcomRefreshIncoming(); });
+    window.addEventListener("online", function () { window.vcomRefreshIncoming(); });
   }
   installIncomingScreen();
   function guestHtml() {

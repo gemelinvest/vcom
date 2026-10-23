@@ -155,7 +155,7 @@ function once(html, from, to, label) {
 }
 
 function patchedIndex(html) {
-  return once(html, "link.js?v=vid22", "link.js?v=vid23", "link.js cache query");
+  return once(html, "link.js?v=vid23", "link.js?v=vid24", "link.js cache query");
 }
 
 function patchedDial(src) {
@@ -266,9 +266,9 @@ async function main() {
     config,
   });
   await api(token, "POST", "/sites/" + SITE + "/channels/live/releases?versionName=" + encodeURIComponent(created.name), {
-    message: "Enable the keypad call button for a real phone number",
+    message: "Check for an incoming call the moment the browser returns",
   });
-  console.log("Published WhatsApp fallback to https://" + SITE + ".web.app/");
+  console.log("Published incoming-call resume to https://" + SITE + ".web.app/");
 }
 
 main().catch((err) => fail(err && err.stack ? err.stack : String(err)));
