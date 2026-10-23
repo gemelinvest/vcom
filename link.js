@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid22";
+  window.__VCOM_LINK_BUILD = "vid23";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -121,6 +121,9 @@
     if (window.vcomWhatsAppPhone(d)) return "whatsapp";
     return "invalid";
   };
+  window.vcomCallButtonReady = function (raw) {
+    return window.vcomDialKind(raw) === "whatsapp";
+  };
   window.vcomWhatsAppCallUrl = function (raw) {
     var phone = window.vcomWhatsAppPhone(raw);
     return phone ? "whatsapp://call?phone=" + phone : "";
@@ -133,6 +136,16 @@
     var callUrl = window.vcomWhatsAppCallUrl(raw);
     var chatUrl = window.vcomWhatsAppChatUrl(raw);
     if (!callUrl || !chatUrl) return false;
+    window.__vcomWhatsAppOpened = callUrl;
+    try {
+      var link = document.createElement("a");
+      link.href = callUrl;
+      link.target = "_blank";
+      link.rel = "noopener";
+      if (document.body) document.body.appendChild(link);
+      if (typeof link.click === "function") link.click();
+      if (typeof link.remove === "function") link.remove();
+    } catch (eLink) {}
     if (window.__vcomWhatsAppTimer) clearTimeout(window.__vcomWhatsAppTimer);
     window.__vcomWhatsAppTimer = setTimeout(function () {
       window.__vcomWhatsAppTimer = 0;
@@ -140,7 +153,6 @@
         if (document.visibilityState !== "hidden") window.location.href = chatUrl;
       } catch (eOpen) {}
     }, 900);
-    window.location.href = callUrl;
     return true;
   };
   function asMillis(value) {
