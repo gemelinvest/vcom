@@ -1,4 +1,4 @@
-const CACHE = "vcom-v7";
+const CACHE = "vcom-v8";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,11 +8,14 @@ const ASSETS = [
   "./apple-touch-icon.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/icon-maskable-192.png",
+  "./icons/icon-maskable-512.png",
   "./icons/vcom-share.png",
   "./icons/vcom-blue-192.png",
   "./icons/vcom-handset.png",
   "./icons/badge-256.png"
 ];
+
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
