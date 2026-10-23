@@ -166,7 +166,7 @@ test("earpiece is a route change, not a quieter speaker", function () {
 
 test("a regular audio call stays on the earpiece when the other side answers", function () {
   const src = fs.readFileSync(LINK, "utf8");
-  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid23"'), true);
+  assert.equal(src.includes('__VCOM_LINK_BUILD = "vid24"'), true);
   const apply = src.match(/window\.vcomApplyEarpieceNow = function[\s\S]*?\n    \};/);
   assert.ok(apply, "earpiece apply exists");
   assert.equal(apply[0].includes(".muted"), false);
@@ -798,6 +798,27 @@ test("a real phone with no VCOM line opens in the caller's WhatsApp", function (
   assert.equal(w.__vcomWhatsAppOpened, "whatsapp://call?phone=972521234567");
   clearTimeout(w.__vcomWhatsAppTimer);
   assert.equal(w.vcomOpenWhatsAppCall("020578412"), false);
+});
+
+test("returning to the browser wakes the call listener immediately", function () {
+  const w = loadLink();
+  assert.equal(w.vcomSessionNeedsWake(1, 0), true);
+  assert.equal(w.vcomSessionNeedsWake(0, 1000), false);
+  assert.equal(w.vcomSessionNeedsWake(0, 1200000), true);
+  w.__vcomUid = "user-1";
+  const fs = {
+    collection: function () { return {}; },
+    query: function () { return {}; },
+    where: function () { return {}; },
+    orderBy: function () { return {}; },
+    limit: function () { return {}; },
+    getFirestore: function () { return {}; },
+    getDocs: function () { return Promise.resolve({ docs: [] }); },
+    onSnapshot: function () { return function () {}; }
+  };
+  w.firebase_firestore = fs;
+  assert.equal(w.vcomRefreshIncoming(), true);
+  assert.equal(w.vcomRefreshIncoming(), false);
 });
 
 test("the repo keeps the relay password out of git", function () {
