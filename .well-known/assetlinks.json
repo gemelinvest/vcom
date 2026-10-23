@@ -5,7 +5,8 @@
       "namespace": "android_app",
       "package_name": "app.vcom.android",
       "sha256_cert_fingerprints": [
-        "84:59:9F:9F:0F:38:F4:8C:A8:E0:3B:4C:F4:6A:81:33:AE:52:C2:83:5A:02:2E:67:69:52:8A:08:79:F9:12:93"
+        "84:59:9F:9F:0F:38:F4:8C:A8:E0:3B:4C:F4:6A:81:33:AE:52:C2:83:5A:02:2E:67:69:52:8A:08:79:F9:12:93",
+        "DD:5D:76:D7:A5:0A:20:74:54:BE:3C:40:F7:86:74:64:08:05:9D:8B:23:8F:F2:3A:48:F1:4D:92:CA:8E:E3:C5"
       ]
     }
   }
