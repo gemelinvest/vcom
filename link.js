@@ -1,5 +1,5 @@
 (function () {
-  window.__VCOM_LINK_BUILD = "vid21";
+  window.__VCOM_LINK_BUILD = "vid22";
   var TTL = 600000;
   function readGuest() {
     var q = "";
@@ -56,6 +56,45 @@
   };
 
   function digits(value) { return String(value || "").replace(/\D/g, ""); }
+  window.vcomWhatsAppPhone = function (raw) {
+    var d = digits(raw);
+    if (d.indexOf("00") === 0) d = d.slice(2);
+    if (/^020\d{6}$/.test(d) || /^\d{6}$/.test(d)) return "";
+    if (/^05\d{8}$/.test(d) || /^07\d{8}$/.test(d)) return "972" + d.slice(1);
+    if (/^0[23489]\d{7}$/.test(d)) return "972" + d.slice(1);
+    if (/^5\d{8}$/.test(d)) return "972" + d;
+    if (/^9725\d{8}$/.test(d) || /^9727\d{8}$/.test(d) || /^972[23489]\d{7}$/.test(d)) return d;
+    if (/^[1-9]\d{10,14}$/.test(d) && d.indexOf("972") !== 0) return d;
+    return "";
+  };
+  window.vcomDialKind = function (raw) {
+    var d = digits(raw);
+    if (/^020\d{6}$/.test(d) || /^\d{6}$/.test(d)) return "vcom";
+    if (window.vcomWhatsAppPhone(d)) return "whatsapp";
+    return "invalid";
+  };
+  window.vcomWhatsAppCallUrl = function (raw) {
+    var phone = window.vcomWhatsAppPhone(raw);
+    return phone ? "whatsapp://call?phone=" + phone : "";
+  };
+  window.vcomWhatsAppChatUrl = function (raw) {
+    var phone = window.vcomWhatsAppPhone(raw);
+    return phone ? "https://wa.me/" + phone : "";
+  };
+  window.vcomOpenWhatsAppCall = function (raw) {
+    var callUrl = window.vcomWhatsAppCallUrl(raw);
+    var chatUrl = window.vcomWhatsAppChatUrl(raw);
+    if (!callUrl || !chatUrl) return false;
+    if (window.__vcomWhatsAppTimer) clearTimeout(window.__vcomWhatsAppTimer);
+    window.__vcomWhatsAppTimer = setTimeout(function () {
+      window.__vcomWhatsAppTimer = 0;
+      try {
+        if (document.visibilityState !== "hidden") window.location.href = chatUrl;
+      } catch (eOpen) {}
+    }, 900);
+    window.location.href = callUrl;
+    return true;
+  };
   function asMillis(value) {
     if (value == null || value === "") return 0;
     if (typeof value === "number" && isFinite(value)) return value < 1e12 ? value * 1000 : value;
